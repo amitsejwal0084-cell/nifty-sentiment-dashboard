@@ -152,7 +152,6 @@ def get_nearest_expiry(groww):
 # GET NIFTY OPTION CHAIN
 # =========================================================
 
-@st.cache_data(ttl=30)
 def get_nifty_option_chain(expiry_date=None):
 
     try:

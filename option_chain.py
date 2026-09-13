@@ -17,8 +17,9 @@ def get_groww_client():
 
         return GrowwAPI(token)
 
-    except Exception:
-        return None
+    except Exception as e:
+    st.error(f"❌ Groww Client Error: {e}")
+    return None
 
 
 # =========================================================
@@ -111,7 +112,8 @@ def get_nifty_option_chain(expiry_date=None):
         groww = get_groww_client()
 
         if groww is None:
-            return pd.DataFrame(), None
+    st.error("❌ Groww client नहीं बना। Streamlit Secrets में GROWW_ACCESS_TOKEN जाँचें।")
+    return pd.DataFrame(), None
 
         if expiry_date is None:
             expiry_date = get_nearest_expiry(groww)

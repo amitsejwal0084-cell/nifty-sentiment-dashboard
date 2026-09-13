@@ -2,6 +2,13 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
+from option_chain import (
+    get_nifty_option_chain,
+    get_atm_option_chain,
+    calculate_pcr,
+    option_sentiment
+)
+
 st.set_page_config(
     page_title="NIFTY Sentiment AI",
     page_icon="🧠",
@@ -11,8 +18,14 @@ st.set_page_config(
 st.title("🧠 NIFTY SENTIMENT AI")
 st.subheader("Live Market Sentiment Dashboard")
 
+
+# =========================
+# NIFTY PRICE DATA
+# =========================
+
 @st.cache_data(ttl=60)
 def get_nifty_data():
+
     data = yf.download(
         "^NSEI",
         period="5d",
@@ -27,45 +40,56 @@ def get_nifty_data():
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
 
-    data = data.dropna()
-
-    return data
+    return data.dropna()
 
 
 data = get_nifty_data()
 
 if data is None or data.empty:
-    st.error("❌ NIFTY data अभी उपलब्ध नहीं है।")
+    st.error("❌ NIFTY data उपलब्ध नहीं है।")
     st.stop()
+
 
 close = data["Close"]
 high = data["High"]
 low = data["Low"]
 volume = data["Volume"]
 
-# Latest price
+
 price = float(close.iloc[-1])
 
-# Price change
 previous = float(close.iloc[-2])
+
 change = price - previous
+
 change_pct = (change / previous) * 100
 
+
+# =========================
 # RSI
+# =========================
+
 delta = close.diff()
 
 gain = delta.clip(lower=0)
+
 loss = -delta.clip(upper=0)
 
 avg_gain = gain.rolling(14).mean()
+
 avg_loss = loss.rolling(14).mean()
 
 rs = avg_gain / avg_loss
+
 rsi = 100 - (100 / (1 + rs))
 
 latest_rsi = float(rsi.iloc[-1])
 
+
+# =========================
 # VWAP
+# =========================
+
 typical_price = (high + low + close) / 3
 
 vwap = (
@@ -74,131 +98,352 @@ vwap = (
 
 latest_vwap = float(vwap.iloc[-1])
 
-# Volume
+
+# =========================
+# VOLUME
+# =========================
+
 latest_volume = float(volume.iloc[-1])
-average_volume = float(volume.rolling(20).mean().iloc[-1])
+
+average_volume = float(
+    volume.rolling(20).mean().iloc[-1]
+)
 
 if latest_volume > average_volume:
     volume_status = "HIGH"
 else:
     volume_status = "NORMAL"
 
-# Simple sentiment score
-score = 50
+
+# =========================
+# OPTION CHAIN
+# =========================
+
+option_data = pd.DataFrame()
+
+option_spot = None
+
+option_error = None
+
+try:
+
+    option_data, option_spot = get_nifty_option_chain()
+
+    if not option_data.empty and option_spot:
+
+        atm_data = get_atm_option_chain(
+            option_data,
+            option_spot,
+            strikes_each_side=4
+        )
+
+        option_pcr = calculate_pcr(atm_data)
+
+        option_bias, option_score = option_sentiment(
+            atm_data
+        )
+
+    else:
+
+        atm_data = pd.DataFrame()
+
+        option_pcr = None
+
+        option_bias = "NO DATA"
+
+        option_score = 50
+
+except Exception as e:
+
+    atm_data = pd.DataFrame()
+
+    option_pcr = None
+
+    option_bias = "NO DATA"
+
+    option_score = 50
+
+    option_error = str(e)
+
+
+# =========================
+# PRICE SENTIMENT
+# =========================
+
+price_score = 50
 
 if price > latest_vwap:
-    score += 15
+    price_score += 15
 else:
-    score -= 15
+    price_score -= 15
+
 
 if latest_rsi > 60:
-    score += 20
+    price_score += 20
+
 elif latest_rsi < 40:
-    score -= 20
+    price_score -= 20
+
 
 if latest_volume > average_volume:
-    score += 10
+    price_score += 10
 
-score = max(0, min(100, score))
 
-if score >= 65:
-    sentiment = "🟢 BULLISH"
-elif score <= 35:
-    sentiment = "🔴 BEARISH"
+price_score = max(
+    0,
+    min(100, price_score)
+)
+
+
+# =========================
+# COMBINED SENTIMENT
+# =========================
+
+if not atm_data.empty:
+
+    final_score = round(
+        (price_score * 0.60)
+        +
+        (option_score * 0.40)
+    )
+
 else:
+
+    final_score = price_score
+
+
+final_score = max(
+    0,
+    min(100, final_score)
+)
+
+
+if final_score >= 65:
+
+    sentiment = "🟢 BULLISH"
+
+elif final_score <= 35:
+
+    sentiment = "🔴 BEARISH"
+
+else:
+
     sentiment = "🟡 NEUTRAL"
 
-st.divider()
+
+# =========================
+# MAIN DASHBOARD
+# =========================
 
 col1, col2 = st.columns(2)
 
 with col1:
+
     st.metric(
         "NIFTY 50",
         f"{price:,.2f}",
         f"{change:+,.2f} ({change_pct:+.2f}%)"
     )
 
+
 with col2:
+
     st.metric(
         "Sentiment Score",
-        f"{score} / 100",
+        f"{final_score} / 100",
         sentiment
     )
 
+
 st.divider()
 
-col1, col2, col3 = st.columns(3)
 
-with col1:
-    st.metric("RSI", f"{latest_rsi:.2f}")
+# =========================
+# INDICATORS
+# =========================
 
-with col2:
+st.subheader("📊 Market Indicators")
+
+
+c1, c2, c3, c4 = st.columns(4)
+
+
+with c1:
+
+    st.metric(
+        "RSI",
+        f"{latest_rsi:.2f}"
+    )
+
+
+with c2:
+
     st.metric(
         "VWAP",
         f"{latest_vwap:,.2f}"
     )
 
-with col3:
+
+with c3:
+
     st.metric(
         "Volume",
         volume_status
     )
 
-st.divider()
 
-st.subheader("📊 Market Analysis")
+with c4:
 
-if price > latest_vwap:
-    st.success("📈 NIFTY VWAP के ऊपर है — bullish pressure")
-else:
-    st.error("📉 NIFTY VWAP के नीचे है — bearish pressure")
+    if option_pcr is not None:
 
-if latest_rsi > 60:
-    st.success("🟢 RSI bullish zone में है")
-elif latest_rsi < 40:
-    st.error("🔴 RSI bearish zone में है")
-else:
-    st.info("🟡 RSI neutral zone में है")
+        st.metric(
+            "PCR",
+            f"{option_pcr:.2f}"
+        )
 
-if latest_volume > average_volume:
-    st.warning("⚡ Volume average से ज्यादा है — market activity बढ़ी हुई है")
-else:
-    st.info("Volume सामान्य स्तर पर है")
+    else:
+
+        st.metric(
+            "PCR",
+            "N/A"
+        )
+
 
 st.divider()
+
+
+# =========================
+# OPTION CHAIN
+# =========================
+
+st.subheader("📊 NIFTY OPTION CHAIN")
+
+if not atm_data.empty:
+
+    st.success(
+        f"Option Chain Connected • Spot: {option_spot:,.2f}"
+    )
+
+    st.write(
+        f"### Option Sentiment: {option_bias}"
+    )
+
+    st.write(
+        f"**Option Score: {option_score}/100**"
+    )
+
+    display_data = atm_data[
+        [
+            "Strike",
+            "CE_OI",
+            "CE_Delta_OI",
+            "CE_Volume",
+            "PE_OI",
+            "PE_Delta_OI",
+            "PE_Volume"
+        ]
+    ].copy()
+
+    display_data.columns = [
+        "Strike",
+        "CE OI",
+        "CE ΔOI",
+        "CE Volume",
+        "PE OI",
+        "PE ΔOI",
+        "PE Volume"
+    ]
+
+    st.dataframe(
+        display_data,
+        use_container_width=True,
+        hide_index=True
+    )
+
+else:
+
+    st.warning(
+        "⚠️ अभी NSE Option Chain data उपलब्ध नहीं है। "
+        "NIFTY price analysis फिर भी चल रहा है।"
+    )
+
+
+st.divider()
+
+
+# =========================
+# MARKET BIAS
+# =========================
+
+st.subheader("🎯 Current Market Bias")
+
+
+if final_score >= 65:
+
+    st.success(
+        f"📈 UPSIDE BIAS — {final_score}/100"
+    )
+
+elif final_score <= 35:
+
+    st.error(
+        f"📉 DOWNSIDE BIAS — {final_score}/100"
+    )
+
+else:
+
+    st.info(
+        f"➡️ NEUTRAL — {final_score}/100"
+    )
+
+
+# =========================
+# COMMENTARY
+# =========================
 
 st.subheader("🤖 AI Market Commentary")
 
-if score >= 65:
+
+if final_score >= 65:
+
     st.write(
-        f"NIFTY का वर्तमान sentiment **BULLISH** है। "
-        f"Sentiment Score {score}/100 है। "
-        f"Price और VWAP की स्थिति तथा RSI को देखते हुए "
-        f"buyers का pressure दिखाई दे रहा है।"
+        "NIFTY का वर्तमान sentiment bullish है। "
+        "Price, VWAP, momentum और उपलब्ध option-chain "
+        "signals को मिलाकर buyers का pressure दिखाई दे रहा है।"
     )
 
-elif score <= 35:
+elif final_score <= 35:
+
     st.write(
-        f"NIFTY का वर्तमान sentiment **BEARISH** है। "
-        f"Sentiment Score {score}/100 है। "
-        f"Price/VWAP और RSI के आधार पर "
-        f"sellers का pressure दिखाई दे रहा है।"
+        "NIFTY का वर्तमान sentiment bearish है। "
+        "Price, VWAP, momentum और उपलब्ध option-chain "
+        "signals sellers के pressure की ओर संकेत कर रहे हैं।"
     )
 
 else:
+
     st.write(
-        f"NIFTY का sentiment फिलहाल **NEUTRAL** है। "
-        f"Score {score}/100 है। "
-        f"Market में स्पष्ट direction का इंतजार करना बेहतर है।"
+        "NIFTY का sentiment फिलहाल neutral है। "
+        "Market में स्पष्ट direction नहीं है। "
+        "अधिक confirmation का इंतजार करना बेहतर है।"
     )
 
-st.caption(
-    "⚠️ यह केवल market-analysis tool है, निश्चित भविष्यवाणी या investment advice नहीं।"
-)
 
 st.divider()
 
+
+st.caption(
+    "⚠️ यह market-analysis tool है। "
+    "यह निश्चित भविष्यवाणी या investment advice नहीं है।"
+)
+
+
+# =========================
+# REFRESH
+# =========================
+
 if st.button("🔄 Refresh Live Data"):
+
     st.cache_data.clear()
+
     st.rerun()

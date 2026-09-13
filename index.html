@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>NIFTY Sentiment AI</title>
+
+<style>
+*{
+    box-sizing:border-box;
+    margin:0;
+    padding:0;
+}
+
+body{
+    font-family:Arial,sans-serif;
+    background:#0b1220;
+    color:#ffffff;
+    padding:15px;
+}
+
+.container{
+    max-width:900px;
+    margin:auto;
+}
+
+.header{
+    text-align:center;
+    padding:20px 10px;
+}
+
+.header h1{
+    font-size:25px;
+}
+
+.header p{
+    color:#9ca3af;
+    margin-top:6px;
+}
+
+.card{
+    background:#151f32;
+    border:1px solid #26344d;
+    border-radius:16px;
+    padding:18px;
+    margin-bottom:15px;
+}
+
+.nifty{
+    text-align:center;
+}
+
+.nifty h2{
+    font-size:34px;
+    margin:8px 0;
+}
+
+.up{
+    color:#22c55e;
+    font-weight:bold;
+}
+
+.sentiment{
+    text-align:center;
+}
+
+.badge{
+    display:inline-block;
+    padding:10px 25px;
+    border-radius:30px;
+    background:#14532d;
+    color:#4ade80;
+    font-size:22px;
+    font-weight:bold;
+    margin:12px 0;
+}
+
+.score{
+    font-size:55px;
+    font-weight:bold;
+}
+
+.grid{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:12px;
+}
+
+.metric{
+    background:#101827;
+    padding:15px;
+    border-radius:12px;
+}
+
+.metric-title{
+    color:#9ca3af;
+    font-size:13px;
+}
+
+.metric-value{
+    font-size:22px;
+    font-weight:bold;
+    margin-top:7px;
+}
+
+.bar{
+    height:12px;
+    background:#26344d;
+    border-radius:20px;
+    overflow:hidden;
+    margin-top:12px;
+}
+
+.bar-fill{
+    height:100%;
+    width:78%;
+    background:#22c55e;
+}
+
+.commentary{
+    line-height:1.6;
+    color:#d1d5db;
+}
+
+.alert{
+    border-left:5px solid #22c55e;
+    padding-left:12px;
+    line-height:1.5;
+}
+
+.footer{
+    text-align:center;
+    color:#6b7280;
+    font-size:12px;
+    padding:15px;
+}
+
+@media(max-width:500px){
+    .grid{
+        grid-template-columns:1fr 1fr;
+    }
+
+    .nifty h2{
+        font-size:28px;
+    }
+
+    .score{
+        font-size:45px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">
+    <h1>🧠 NIFTY SENTIMENT AI</h1>
+    <p>Market Sentiment Dashboard</p>
+</div>
+
+<div class="card nifty">
+    <div>📈 NIFTY 50</div>
+    <h2>25,000.00</h2>
+    <div class="up">▲ +125.40 (+0.50%)</div>
+</div>
+
+<div class="card sentiment">
+
+    <div>MARKET SENTIMENT</div>
+
+    <div class="badge">
+        🟢 BULLISH
+    </div>
+
+    <div class="score">78</div>
+    <div>Sentiment Score / 100</div>
+
+    <div class="bar">
+        <div class="bar-fill"></div>
+    </div>
+
+</div>
+
+<div class="card">
+
+<h3>📊 Market Indicators</h3>
+
+<br>
+
+<div class="grid">
+
+<div class="metric">
+<div class="metric-title">RSI</div>
+<div class="metric-value up">64.2</div>
+</div>
+
+<div class="metric">
+<div class="metric-title">VWAP</div>
+<div class="metric-value up">ABOVE</div>
+</div>
+
+<div class="metric">
+<div class="metric-title">VOLUME</div>
+<div class="metric-value">HIGH</div>
+</div>
+
+<div class="metric">
+<div class="metric-title">PCR</div>
+<div class="metric-value up">1.18</div>
+</div>
+
+<div class="metric">
+<div class="metric-title">CE OI</div>
+<div class="metric-value">↓ 4.2%</div>
+</div>
+
+<div class="metric">
+<div class="metric-title">PE OI</div>
+<div class="metric-value up">↑ 8.7%</div>
+</div>
+
+</div>
+</div>
+
+<div class="card">
+
+<h3>🧱 Support / Resistance</h3>
+
+<br>
+
+<div class="grid">
+
+<div class="metric">
+<div class="metric-title">SUPPORT</div>
+<div class="metric-value">24,800</div>
+</div>
+
+<div class="metric">
+<div class="metric-title">RESISTANCE</div>
+<div class="metric-value">25,300</div>
+</div>
+
+</div>
+
+</div>
+
+<div class="card">
+
+<h3>⚡ Market Pressure</h3>
+
+<br>
+
+<div>🟢 Buyers — 78%</div>
+
+<div class="bar">
+<div class="bar-fill"></div>
+</div>
+
+<br>
+
+<div>🔴 Sellers — 22%</div>
+
+</div>
+
+<div class="card">
+
+<h3>🚨 Sentiment Shift</h3>
+
+<br>
+
+<div class="alert">
+🟢 Bullish pressure increasing.
+<br>
+Option data और price momentum फिलहाल
+bullish direction को support कर रहे हैं।
+</div>
+
+</div>
+
+<div class="card">
+
+<h3>🤖 AI Market Commentary</h3>
+
+<br>
+
+<div class="commentary">
+
+Nifty फिलहाल VWAP के ऊपर बना हुआ है।
+RSI positive zone में है और Put OI में
+बढ़ोतरी दिखाई जा रही है।
+
+इन संकेतों के आधार पर वर्तमान market bias
+<strong>bullish</strong> है।
+
+लेकिन resistance zone के पास rejection
+आने पर sentiment तेजी से बदल सकता है।
+
+</div>
+
+</div>
+
+<div class="card">
+
+<h3>🎯 Current Market Bias</h3>
+
+<br>
+
+<div class="badge">
+📈 UPSIDE BIAS
+</div>
+
+<p>Confidence: <strong>78%</strong></p>
+
+</div>
+
+<div class="footer">
+
+Demo Dashboard • Live Market Data बाद में जोड़ा जाएगा
+
+</div>
+
+</div>
+
+</body>
+</html>

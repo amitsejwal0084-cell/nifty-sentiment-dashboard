@@ -197,8 +197,9 @@ def get_nifty_option_chain(expiry_date=None):
         return option_df, spot
 
 
-    except Exception:
-        return pd.DataFrame(), None
+    except Exception as e:
+    st.error(f"❌ Groww API Error: {e}")
+    return pd.DataFrame(), None
 
 
 # =========================================================

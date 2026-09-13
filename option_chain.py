@@ -39,27 +39,47 @@ def get_nearest_expiry(groww):
             month=today.month
         )
 
-        expiries = response.get("expiries", [])
+        # Handle different response formats
+        if isinstance(response, dict):
+
+            if (
+                "payload" in response
+                and isinstance(response["payload"], dict)
+            ):
+                response = response["payload"]
+
+            expiries = response.get("expiries", [])
+
+        else:
+            expiries = []
+
 
         future_expiries = []
 
         for expiry in expiries:
+
             try:
+
                 expiry_date = datetime.strptime(
-                    expiry, "%Y-%m-%d"
+                    expiry,
+                    "%Y-%m-%d"
                 ).date()
 
                 if expiry_date >= today:
                     future_expiries.append(expiry)
 
             except Exception:
-                pass
+                continue
+
 
         if future_expiries:
             return sorted(future_expiries)[0]
 
 
-        # Next month
+        # -----------------------------------------
+        # NEXT MONTH
+        # -----------------------------------------
+
         if today.month == 12:
             next_year = today.year + 1
             next_month = 1
@@ -75,29 +95,57 @@ def get_nearest_expiry(groww):
             month=next_month
         )
 
-        expiries = response.get("expiries", [])
+
+        if isinstance(response, dict):
+
+            if (
+                "payload" in response
+                and isinstance(response["payload"], dict)
+            ):
+                response = response["payload"]
+
+            expiries = response.get("expiries", [])
+
+        else:
+            expiries = []
+
 
         future_expiries = []
 
         for expiry in expiries:
+
             try:
+
                 expiry_date = datetime.strptime(
-                    expiry, "%Y-%m-%d"
+                    expiry,
+                    "%Y-%m-%d"
                 ).date()
 
                 if expiry_date >= today:
                     future_expiries.append(expiry)
 
             except Exception:
-                pass
+                continue
+
 
         if future_expiries:
             return sorted(future_expiries)[0]
 
-    except Exception:
-        pass
 
-    return None
+        st.error(
+            "❌ Groww से NIFTY की कोई upcoming expiry नहीं मिली।"
+        )
+
+        return None
+
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Groww Expiry API Error: {e}"
+        )
+
+        return None
 
 
 # =========================================================

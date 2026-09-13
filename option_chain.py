@@ -22,7 +22,7 @@ def get_groww_client():
 
 
 # =========================================================
-# FIND NEAREST NIFTY EXPIRY
+# FIND NEAREST EXPIRY
 # =========================================================
 
 def get_nearest_expiry(groww):
@@ -30,7 +30,7 @@ def get_nearest_expiry(groww):
     today = date.today()
 
     try:
-        # Current month
+
         response = groww.get_expiries(
             exchange=groww.EXCHANGE_NSE,
             underlying_symbol="NIFTY",
@@ -40,13 +40,23 @@ def get_nearest_expiry(groww):
 
         expiries = response.get("expiries", [])
 
-        future_expiries = [
-            x for x in expiries
-            if datetime.strptime(x, "%Y-%m-%d").date() >= today
-        ]
+        future_expiries = []
+
+        for expiry in expiries:
+            try:
+                expiry_date = datetime.strptime(
+                    expiry, "%Y-%m-%d"
+                ).date()
+
+                if expiry_date >= today:
+                    future_expiries.append(expiry)
+
+            except Exception:
+                pass
 
         if future_expiries:
             return sorted(future_expiries)[0]
+
 
         # Next month
         if today.month == 12:
@@ -55,6 +65,7 @@ def get_nearest_expiry(groww):
         else:
             next_year = today.year
             next_month = today.month + 1
+
 
         response = groww.get_expiries(
             exchange=groww.EXCHANGE_NSE,
@@ -65,16 +76,25 @@ def get_nearest_expiry(groww):
 
         expiries = response.get("expiries", [])
 
-        future_expiries = [
-            x for x in expiries
-            if datetime.strptime(x, "%Y-%m-%d").date() >= today
-        ]
+        future_expiries = []
+
+        for expiry in expiries:
+            try:
+                expiry_date = datetime.strptime(
+                    expiry, "%Y-%m-%d"
+                ).date()
+
+                if expiry_date >= today:
+                    future_expiries.append(expiry)
+
+            except Exception:
+                pass
 
         if future_expiries:
             return sorted(future_expiries)[0]
 
     except Exception:
-        return None
+        pass
 
     return None
 
@@ -91,14 +111,14 @@ def get_nifty_option_chain(expiry_date=None):
         groww = get_groww_client()
 
         if groww is None:
-            return None
+            return pd.DataFrame(), None
 
-        # Automatically find nearest expiry
         if expiry_date is None:
             expiry_date = get_nearest_expiry(groww)
 
         if not expiry_date:
-            return None
+            return pd.DataFrame(), None
+
 
         data = groww.get_option_chain(
             exchange=groww.EXCHANGE_NSE,
@@ -106,247 +126,294 @@ def get_nifty_option_chain(expiry_date=None):
             expiry_date=expiry_date
         )
 
-        # Some API responses may contain payload
-        if isinstance(data, dict):
 
-            if "payload" in data and isinstance(data["payload"], dict):
-                data = data["payload"]
+        # Handle payload response
+        if (
+            isinstance(data, dict)
+            and "payload" in data
+            and isinstance(data["payload"], dict)
+        ):
+            data = data["payload"]
+
 
         if not isinstance(data, dict):
+            return pd.DataFrame(), None
+
+
+        strikes = data.get("strikes", {})
+
+        if not strikes:
+            return pd.DataFrame(), None
+
+
+        spot = data.get("underlying_ltp")
+
+        rows = []
+
+
+        for strike, strike_data in strikes.items():
+
+            try:
+                strike_price = float(strike)
+            except Exception:
+                continue
+
+
+            ce = strike_data.get("CE", {}) or {}
+            pe = strike_data.get("PE", {}) or {}
+
+            ce_greeks = ce.get("greeks", {}) or {}
+            pe_greeks = pe.get("greeks", {}) or {}
+
+
+            rows.append({
+
+                "Strike": strike_price,
+
+                "CE_LTP": ce.get("ltp", 0),
+                "CE_OI": ce.get("open_interest", 0),
+                "CE_Volume": ce.get("volume", 0),
+                "CE_IV": ce_greeks.get("iv", 0),
+
+                "PE_LTP": pe.get("ltp", 0),
+                "PE_OI": pe.get("open_interest", 0),
+                "PE_Volume": pe.get("volume", 0),
+                "PE_IV": pe_greeks.get("iv", 0)
+            })
+
+
+        option_df = pd.DataFrame(rows)
+
+
+        if option_df.empty:
+            return pd.DataFrame(), spot
+
+
+        option_df = option_df.sort_values(
+            "Strike"
+        ).reset_index(drop=True)
+
+
+        return option_df, spot
+
+
+    except Exception:
+        return pd.DataFrame(), None
+
+
+# =========================================================
+# ATM ±4 OPTION CHAIN
+# =========================================================
+
+def get_atm_option_chain(
+    option_data,
+    option_spot,
+    strikes_each_side=4
+):
+
+    if option_data is None:
+        return pd.DataFrame()
+
+
+    if not isinstance(option_data, pd.DataFrame):
+        return pd.DataFrame()
+
+
+    if option_data.empty:
+        return pd.DataFrame()
+
+
+    if option_spot is None:
+        return option_data.head(9).copy()
+
+
+    try:
+
+        spot = float(option_spot)
+
+
+        # Find closest strike to NIFTY spot
+        atm_position = (
+            option_data["Strike"] - spot
+        ).abs().idxmin()
+
+
+        position = option_data.index.get_loc(
+            atm_position
+        )
+
+
+        start = max(
+            0,
+            position - strikes_each_side
+        )
+
+
+        end = min(
+            len(option_data),
+            position + strikes_each_side + 1
+        )
+
+
+        atm_data = option_data.iloc[
+            start:end
+        ].copy()
+
+
+        # Mark ATM
+        atm_data["ATM"] = ""
+
+
+        atm_strike = option_data.loc[
+            atm_position,
+            "Strike"
+        ]
+
+
+        atm_data.loc[
+            atm_data["Strike"] == atm_strike,
+            "ATM"
+        ] = "ATM"
+
+
+        return atm_data
+
+
+    except Exception:
+        return pd.DataFrame()
+
+
+# =========================================================
+# PCR
+# =========================================================
+
+def calculate_pcr(atm_data):
+
+    if atm_data is None:
+        return None
+
+
+    if not isinstance(atm_data, pd.DataFrame):
+        return None
+
+
+    if atm_data.empty:
+        return None
+
+
+    try:
+
+        ce_oi = pd.to_numeric(
+            atm_data["CE_OI"],
+            errors="coerce"
+        ).fillna(0).sum()
+
+
+        pe_oi = pd.to_numeric(
+            atm_data["PE_OI"],
+            errors="coerce"
+        ).fillna(0).sum()
+
+
+        if ce_oi <= 0:
             return None
 
-        if "strikes" not in data:
-            return None
 
-        return data
+        return round(
+            pe_oi / ce_oi,
+            2
+        )
+
 
     except Exception:
         return None
 
 
 # =========================================================
-# CONVERT OPTION CHAIN TO DATAFRAME
+# OPTION SENTIMENT
 # =========================================================
 
-def option_chain_to_dataframe(option_data):
+def option_sentiment(atm_data):
 
-    if not option_data:
-        return pd.DataFrame()
-
-    strikes = option_data.get("strikes", {})
-
-    rows = []
-
-    for strike, data in strikes.items():
-
-        try:
-            strike_price = float(strike)
-        except Exception:
-            continue
-
-        ce = data.get("CE", {}) or {}
-        pe = data.get("PE", {}) or {}
-
-        ce_greeks = ce.get("greeks", {}) or {}
-        pe_greeks = pe.get("greeks", {}) or {}
-
-        rows.append({
-
-            "Strike": strike_price,
-
-            "CE_LTP": ce.get("ltp", 0),
-            "CE_OI": ce.get("open_interest", 0),
-            "CE_Volume": ce.get("volume", 0),
-            "CE_IV": ce_greeks.get("iv", 0),
-            "CE_Delta": ce_greeks.get("delta", 0),
-
-            "PE_LTP": pe.get("ltp", 0),
-            "PE_OI": pe.get("open_interest", 0),
-            "PE_Volume": pe.get("volume", 0),
-            "PE_IV": pe_greeks.get("iv", 0),
-            "PE_Delta": pe_greeks.get("delta", 0),
-        })
-
-    df = pd.DataFrame(rows)
-
-    if not df.empty:
-        df = df.sort_values("Strike").reset_index(drop=True)
-
-    return df
+    if atm_data is None:
+        return "NO DATA", 50
 
 
-# =========================================================
-# ATM ±4 STRIKES
-# =========================================================
-
-def get_atm_option_chain(option_data, window=4):
-
-    df = option_chain_to_dataframe(option_data)
-
-    if df.empty:
-        return df
-
-    underlying_ltp = option_data.get("underlying_ltp")
-
-    if underlying_ltp is None:
-        return df.head(9)
-
-    # Find nearest ATM strike
-    atm_index = (
-        (df["Strike"] - float(underlying_ltp))
-        .abs()
-        .idxmin()
-    )
-
-    position = df.index.get_loc(atm_index)
-
-    start = max(0, position - window)
-    end = min(len(df), position + window + 1)
-
-    atm_df = df.iloc[start:end].copy()
-
-    atm_df["ATM"] = ""
-
-    atm_df.loc[
-        atm_df["Strike"] == df.loc[atm_index, "Strike"],
-        "ATM"
-    ] = "ATM"
-
-    return atm_df
+    if not isinstance(atm_data, pd.DataFrame):
+        return "NO DATA", 50
 
 
-# =========================================================
-# PCR CALCULATION
-# =========================================================
+    if atm_data.empty:
+        return "NO DATA", 50
 
-def calculate_pcr(option_data):
-
-    df = option_chain_to_dataframe(option_data)
-
-    if df.empty:
-        return None
-
-    ce_oi = pd.to_numeric(
-        df["CE_OI"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    pe_oi = pd.to_numeric(
-        df["PE_OI"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    if ce_oi <= 0:
-        return None
-
-    return round(pe_oi / ce_oi, 2)
-
-
-# =========================================================
-# ATM PCR
-# =========================================================
-
-def calculate_atm_pcr(option_data, window=4):
-
-    df = get_atm_option_chain(
-        option_data,
-        window
-    )
-
-    if df.empty:
-        return None
-
-    ce_oi = pd.to_numeric(
-        df["CE_OI"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    pe_oi = pd.to_numeric(
-        df["PE_OI"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    if ce_oi <= 0:
-        return None
-
-    return round(pe_oi / ce_oi, 2)
-
-
-# =========================================================
-# OPTION SENTIMENT SCORE
-# =========================================================
-
-def option_sentiment(option_data):
-
-    df = get_atm_option_chain(
-        option_data,
-        window=4
-    )
-
-    if df.empty:
-        return 50
 
     score = 50
 
-    # -----------------------------------------
-    # PCR SIGNAL
-    # -----------------------------------------
 
-    pcr = calculate_pcr(option_data)
+    try:
 
-    if pcr is not None:
+        ce_oi = pd.to_numeric(
+            atm_data["CE_OI"],
+            errors="coerce"
+        ).fillna(0).sum()
 
-        if pcr >= 1.20:
-            score += 15
 
-        elif pcr >= 1.05:
-            score += 8
+        pe_oi = pd.to_numeric(
+            atm_data["PE_OI"],
+            errors="coerce"
+        ).fillna(0).sum()
 
-        elif pcr <= 0.80:
-            score -= 15
 
-        elif pcr <= 0.95:
-            score -= 8
+        ce_volume = pd.to_numeric(
+            atm_data["CE_Volume"],
+            errors="coerce"
+        ).fillna(0).sum()
 
-    # -----------------------------------------
-    # OI SIGNAL
-    # -----------------------------------------
 
-    ce_oi = pd.to_numeric(
-        df["CE_OI"],
-        errors="coerce"
-    ).fillna(0).sum()
+        pe_volume = pd.to_numeric(
+            atm_data["PE_Volume"],
+            errors="coerce"
+        ).fillna(0).sum()
 
-    pe_oi = pd.to_numeric(
-        df["PE_OI"],
-        errors="coerce"
-    ).fillna(0).sum()
 
-    if ce_oi > 0:
+        # -----------------------------------------
+        # PCR
+        # -----------------------------------------
 
-        oi_ratio = pe_oi / ce_oi
+        if ce_oi > 0:
 
-        if oi_ratio > 1.15:
-            score += 10
+            pcr = pe_oi / ce_oi
 
-        elif oi_ratio < 0.85:
-            score -= 10
 
-    # -----------------------------------------
-    # VOLUME SIGNAL
-    # -----------------------------------------
+            if pcr >= 1.20:
+                score += 15
 
-    ce_volume = pd.to_numeric(
-        df["CE_Volume"],
-        errors="coerce"
-    ).fillna(0).sum()
+            elif pcr >= 1.05:
+                score += 8
 
-    pe_volume = pd.to_numeric(
-        df["PE_Volume"],
-        errors="coerce"
-    ).fillna(0).sum()
+            elif pcr <= 0.80:
+                score -= 15
 
-    if ce_volume > 0 or pe_volume > 0:
+            elif pcr <= 0.95:
+                score -= 8
+
+
+        # -----------------------------------------
+        # OI BALANCE
+        # -----------------------------------------
+
+        if ce_oi > 0:
+
+            if pe_oi > ce_oi * 1.15:
+                score += 10
+
+            elif ce_oi > pe_oi * 1.15:
+                score -= 10
+
+
+        # -----------------------------------------
+        # VOLUME BALANCE
+        # -----------------------------------------
 
         if pe_volume > ce_volume * 1.10:
             score += 5
@@ -354,57 +421,30 @@ def option_sentiment(option_data):
         elif ce_volume > pe_volume * 1.10:
             score -= 5
 
-    # -----------------------------------------
-    # LIMIT SCORE
-    # -----------------------------------------
 
-    score = max(0, min(100, score))
-
-    return int(score)
-
-
-# =========================================================
-# OPTION SENTIMENT LABEL
-# =========================================================
-
-def option_sentiment_label(score):
-
-    if score >= 65:
-        return "Bullish"
-
-    elif score <= 35:
-        return "Bearish"
-
-    return "Neutral"
+        # Keep score 0-100
+        score = max(
+            0,
+            min(100, score)
+        )
 
 
-# =========================================================
-# SUPPORT / RESISTANCE FROM OI
-# =========================================================
+        # -----------------------------------------
+        # BIAS
+        # -----------------------------------------
 
-def get_oi_support_resistance(option_data):
+        if score >= 65:
+            bias = "BULLISH"
 
-    df = option_chain_to_dataframe(option_data)
+        elif score <= 35:
+            bias = "BEARISH"
 
-    if df.empty:
-        return None, None
+        else:
+            bias = "NEUTRAL"
 
-    try:
 
-        # Highest Put OI = possible support
-        support_row = df.loc[
-            df["PE_OI"].idxmax()
-        ]
+        return bias, int(score)
 
-        # Highest Call OI = possible resistance
-        resistance_row = df.loc[
-            df["CE_OI"].idxmax()
-        ]
-
-        support = support_row["Strike"]
-        resistance = resistance_row["Strike"]
-
-        return support, resistance
 
     except Exception:
-        return None, None
+        return "NO DATA", 50

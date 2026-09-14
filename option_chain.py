@@ -58,7 +58,7 @@ def get_nifty_option_chain():
                 st.write("✅ Groww account profile accessible")
 
     except Exception as e:
-    st.warning(f"⚠️ Groww Profile Check: {e}")
+        st.warning(f"⚠️ Groww Profile Check: {e}")
 
 # Option Chain
 try:

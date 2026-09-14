@@ -8,7 +8,9 @@ def get_groww_client():
     token = st.secrets.get("GROWW_ACCESS_TOKEN")
 
     if not token:
-        raise Exception("GROWW_ACCESS_TOKEN Streamlit Secrets में नहीं मिला।")
+        raise Exception(
+            "GROWW_ACCESS_TOKEN Streamlit Secrets में नहीं मिला।"
+        )
 
     return GrowwAPI(token)
 
@@ -35,31 +37,29 @@ def get_nearest_expiry():
 
 
 def get_nifty_option_chain():
-
     groww = get_groww_client()
 
     expiry_date = get_nearest_expiry()
 
     st.info(f"📅 NIFTY Expiry: {expiry_date}")
 
-    # Groww profile / permission test
-try:
-    profile = groww.get_user_profile()
-
-    if isinstance(profile, dict):
-        segments = profile.get("active_segments")
-
-        if segments is not None:
-            st.write(f"📌 Active Segments: {segments}")
-
-        if profile.get("client_id"):
-            st.write("✅ Groww account profile connected")
-
-except Exception as e:
-    st.warning(f"⚠️ Groww Profile Check: {e}")
-    # Option Chain
     try:
+        profile = groww.get_user_profile()
 
+        if isinstance(profile, dict):
+            segments = profile.get("active_segments")
+
+            if segments is not None:
+                st.write(
+                    f"📌 Active Segments: {segments}"
+                )
+
+    except Exception as e:
+        st.warning(
+            f"⚠️ Groww Profile Check: {e}"
+        )
+
+    try:
         response = groww.get_option_chain(
             exchange=groww.EXCHANGE_NSE,
             underlying="NIFTY",
@@ -67,77 +67,63 @@ except Exception as e:
         )
 
     except Exception as e:
-
-        st.error(f"❌ Groww Option Chain API Error: {e}")
-
+        st.error(
+            f"❌ Groww Option Chain API Error: {e}"
+        )
         return pd.DataFrame(), None
 
-    spot = None
-
-    if isinstance(response, dict):
-
-        data = response.get("option_chain")
-
-        if data is None:
-            data = response.get("data")
-
-        spot = (
-            response.get("underlying_ltp")
-            or response.get("spot_price")
-            or response.get("underlying_price")
+    if not isinstance(response, dict):
+        st.warning(
+            "⚠️ Groww response का format सही नहीं है।"
         )
+        return pd.DataFrame(), None
 
-        if data is None:
-            data = response
+    spot = response.get("underlying_ltp")
 
-    else:
+    strikes = response.get("strikes", {})
 
-        data = response
+    rows = []
 
-    if isinstance(data, list):
+    if isinstance(strikes, dict):
 
-        df = pd.DataFrame(data)
+        for strike, sides in strikes.items():
 
-    elif isinstance(data, dict):
+            if not isinstance(sides, dict):
+                continue
 
-        rows = []
+            for option_type in ("CE", "PE"):
 
-        for strike, value in data.items():
+                contract = sides.get(option_type)
 
-            if isinstance(value, dict):
+                if not isinstance(contract, dict):
+                    continue
 
-                row = value.copy()
-                row["strike_price"] = strike
-                rows.append(row)
+                greeks = contract.get("greeks") or {}
 
-        df = pd.DataFrame(rows)
+                rows.append(
+                    {
+                        "strike_price": float(strike),
+                        "option_type": option_type,
+                        "trading_symbol": contract.get(
+                            "trading_symbol"
+                        ),
+                        "ltp": contract.get("ltp"),
+                        "open_interest": contract.get(
+                            "open_interest", 0
+                        ),
+                        "volume": contract.get(
+                            "volume", 0
+                        ),
+                        "iv": greeks.get("iv"),
+                        "delta": greeks.get("delta"),
+                        "gamma": greeks.get("gamma"),
+                        "theta": greeks.get("theta"),
+                        "vega": greeks.get("vega"),
+                        "rho": greeks.get("rho"),
+                    }
+                )
 
-    else:
-
-        df = pd.DataFrame()
-
-    # Find spot price
-    if spot is None and not df.empty:
-
-        for col in [
-            "underlying_ltp",
-            "spot_price",
-            "underlying_price",
-            "underlying_ltp_price"
-        ]:
-
-            if col in df.columns:
-
-                values = pd.to_numeric(
-                    df[col],
-                    errors="coerce"
-                ).dropna()
-
-                if not values.empty:
-
-                    spot = float(values.iloc[0])
-
-                    break
+    df = pd.DataFrame(rows)
 
     if df.empty:
 
@@ -145,11 +131,15 @@ except Exception as e:
             "⚠️ Groww ने Option Chain data खाली भेजा।"
         )
 
-    else:
+        return df, spot
 
-        st.success(
-            f"✅ Groww Option Chain मिला — {len(df)} rows"
-        )
+    st.success(
+        f"✅ Groww Option Chain मिला — "
+        f"{len(df)} contracts"
+    )
+
+    if spot is not None:
+        spot = float(spot)
 
     return df, spot
 
@@ -165,39 +155,27 @@ def get_atm_option_chain(
 
     df = option_data.copy()
 
-    strike_col = next(
-        (
-            c for c in [
-                "strike_price",
-                "strike",
-                "strikePrice"
-            ]
-            if c in df.columns
-        ),
-        None
-    )
-
-    if strike_col is None:
-        return pd.DataFrame()
-
-    df[strike_col] = pd.to_numeric(
-        df[strike_col],
+    df["strike_price"] = pd.to_numeric(
+        df["strike_price"],
         errors="coerce"
     )
 
     df = df.dropna(
-        subset=[strike_col]
+        subset=["strike_price"]
     )
 
-    atm = round(float(option_spot) / 50) * 50
+    atm = round(
+        float(option_spot) / 50
+    ) * 50
 
     low = atm - strikes_each_side * 50
+
     high = atm + strikes_each_side * 50
 
     return df[
-        (df[strike_col] >= low)
+        (df["strike_price"] >= low)
         &
-        (df[strike_col] <= high)
+        (df["strike_price"] <= high)
     ].copy()
 
 
@@ -206,59 +184,35 @@ def calculate_pcr(atm_data):
     if atm_data.empty:
         return None
 
-    oi_col = next(
-        (
-            c for c in [
-                "open_interest",
-                "openInterest",
-                "oi"
-            ]
-            if c in atm_data.columns
-        ),
-        None
-    )
-
-    type_col = next(
-        (
-            c for c in [
-                "option_type",
-                "optionType",
-                "type"
-            ]
-            if c in atm_data.columns
-        ),
-        None
-    )
-
-    if oi_col is None or type_col is None:
-        return None
-
     df = atm_data.copy()
 
-    df[oi_col] = pd.to_numeric(
-        df[oi_col],
+    df["open_interest"] = pd.to_numeric(
+        df["open_interest"],
         errors="coerce"
     ).fillna(0)
 
-    typ = df[type_col].astype(str).str.upper()
+    option_type = (
+        df["option_type"]
+        .astype(str)
+        .str.upper()
+    )
 
     call_oi = df.loc[
-        typ.isin(["CE", "CALL"]),
-        oi_col
+        option_type == "CE",
+        "open_interest"
     ].sum()
 
     put_oi = df.loc[
-        typ.isin(["PE", "PUT"]),
-        oi_col
+        option_type == "PE",
+        "open_interest"
     ].sum()
 
     if call_oi == 0:
         return None
 
-    return round(
-        put_oi / call_oi,
-        2
-    )
+    pcr = put_oi / call_oi
+
+    return round(float(pcr), 2)
 
 
 def option_sentiment(atm_data):
@@ -277,86 +231,45 @@ def option_sentiment(atm_data):
     return "NEUTRAL", 50
 
 
-def get_option_support_resistance(atm_data):
+def calculate_support_resistance(atm_data):
 
     if atm_data.empty:
         return None, None
 
-    strike_col = next(
-        (
-            c for c in [
-                "strike_price",
-                "strike",
-                "strikePrice"
-            ]
-            if c in atm_data.columns
-        ),
-        None
-    )
-
-    oi_col = next(
-        (
-            c for c in [
-                "open_interest",
-                "openInterest",
-                "oi"
-            ]
-            if c in atm_data.columns
-        ),
-        None
-    )
-
-    type_col = next(
-        (
-            c for c in [
-                "option_type",
-                "optionType",
-                "type"
-            ]
-            if c in atm_data.columns
-        ),
-        None
-    )
-
-    if (
-        strike_col is None
-        or oi_col is None
-        or type_col is None
-    ):
-        return None, None
-
     df = atm_data.copy()
 
-    df[oi_col] = pd.to_numeric(
-        df[oi_col],
+    df["open_interest"] = pd.to_numeric(
+        df["open_interest"],
         errors="coerce"
     ).fillna(0)
 
-    typ = df[type_col].astype(str).str.upper()
+    option_type = (
+        df["option_type"]
+        .astype(str)
+        .str.upper()
+    )
 
     calls = df[
-        typ.isin(["CE", "CALL"])
-    ]
+        option_type == "CE"
+    ].copy()
 
     puts = df[
-        typ.isin(["PE", "PUT"])
-    ]
+        option_type == "PE"
+    ].copy()
 
     resistance = None
     support = None
 
     if not calls.empty:
-
         resistance = calls.loc[
-            calls[oi_col].idxmax(),
-            strike_col
+            calls["open_interest"].idxmax(),
+            "strike_price"
         ]
 
     if not puts.empty:
-
         support = puts.loc[
-            puts[oi_col].idxmax(),
-            strike_col
+            puts["open_interest"].idxmax(),
+            "strike_price"
         ]
 
     return support, resistance

@@ -60,17 +60,6 @@ def get_nifty_option_chain():
     except Exception as e:
     st.warning(f"⚠️ Groww Profile Check: {e}")
 
-# Live Quote Test
-try:
-    quote = groww.get_quote(
-        exchange=groww.EXCHANGE_NSE,
-        segment=groww.SEGMENT_CASH,
-        trading_symbol="NIFTY"
-    )
-    st.success(f"✅ Groww Live Quote Working: {quote}")
-except Exception as e:
-    st.error(f"❌ Groww Live Quote Error: {e}")
-
 # Option Chain
 try:
 

@@ -43,25 +43,22 @@ def get_nifty_option_chain():
     st.info(f"📅 NIFTY Expiry: {expiry_date}")
 
     # Groww profile / permission test
-    try:
-
-        profile = groww.get_user_profile()
-
-        if isinstance(profile, dict):
-
-            segments = profile.get("active_segments")
-
-            if segments is not None:
-                st.write(f"📌 Active Segments: {segments}")
-
-            if profile.get("client_id"):
-                st.write("✅ Groww account profile accessible")
-
-    except Exception as e:
-        st.warning(f"⚠️ Groww Profile Check: {e}")
-
-# Option Chain
 try:
+    profile = groww.get_user_profile()
+
+    if isinstance(profile, dict):
+        segments = profile.get("active_segments")
+
+        if segments is not None:
+            st.write(f"📌 Active Segments: {segments}")
+
+        if profile.get("client_id"):
+            st.write("✅ Groww account profile connected")
+
+except Exception as e:
+    st.warning(f"⚠️ Groww Profile Check: {e}")
+    # Option Chain
+    try:
 
         response = groww.get_option_chain(
             exchange=groww.EXCHANGE_NSE,

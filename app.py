@@ -2,12 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-from option_chain import (
-    get_nifty_option_chain,
-    get_atm_option_chain,
-    calculate_pcr,
-    option_sentiment
-)
 
 st.set_page_config(
     page_title="NIFTY Sentiment AI",
@@ -15,13 +9,14 @@ st.set_page_config(
     layout="wide"
 )
 
+
 st.title("🧠 NIFTY SENTIMENT AI")
 st.subheader("Live Market Sentiment Dashboard")
 
 
-# =========================
-# NIFTY PRICE DATA
-# =========================
+# -----------------------------
+# NIFTY DATA
+# -----------------------------
 
 @st.cache_data(ttl=60)
 def get_nifty_data():
@@ -35,205 +30,268 @@ def get_nifty_data():
     )
 
     if data.empty:
-        return None
+        return pd.DataFrame()
 
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
 
-    return data.dropna()
+    data = data.dropna()
 
+    return data
+
+
+# -----------------------------
+# RSI
+# -----------------------------
+
+def calculate_rsi(series, period=14):
+
+    delta = series.diff()
+
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
+
+    rsi = 100 - (100 / (1 + rs))
+
+    return rsi
+
+
+# -----------------------------
+# ANALYSIS
+# -----------------------------
 
 data = get_nifty_data()
 
-if data is None or data.empty:
-    st.error("❌ NIFTY data उपलब्ध नहीं है।")
+
+if data.empty:
+
+    st.error(
+        "❌ NIFTY market data अभी उपलब्ध नहीं है। "
+        "थोड़ी देर बाद Refresh करें।"
+    )
+
     st.stop()
 
 
-close = data["Close"]
-high = data["High"]
-low = data["Low"]
-volume = data["Volume"]
-
-
-price = float(close.iloc[-1])
-
-previous = float(close.iloc[-2])
-
-change = price - previous
-
-change_pct = (change / previous) * 100
-
-
-# =========================
-# RSI
-# =========================
-
-delta = close.diff()
-
-gain = delta.clip(lower=0)
-
-loss = -delta.clip(upper=0)
-
-avg_gain = gain.rolling(14).mean()
-
-avg_loss = loss.rolling(14).mean()
-
-rs = avg_gain / avg_loss
-
-rsi = 100 - (100 / (1 + rs))
-
-latest_rsi = float(rsi.iloc[-1])
-
-
-# =========================
-# VWAP
-# =========================
-
-typical_price = (high + low + close) / 3
-
-vwap = (
-    typical_price * volume
-).cumsum() / volume.cumsum()
-
-latest_vwap = float(vwap.iloc[-1])
-
-
-# =========================
-# VOLUME
-# =========================
-
-latest_volume = float(volume.iloc[-1])
-
-average_volume = float(
-    volume.rolling(20).mean().iloc[-1]
+close = pd.to_numeric(
+    data["Close"],
+    errors="coerce"
 )
 
-if latest_volume > average_volume:
-    volume_status = "HIGH"
+high = pd.to_numeric(
+    data["High"],
+    errors="coerce"
+)
+
+low = pd.to_numeric(
+    data["Low"],
+    errors="coerce"
+)
+
+volume = pd.to_numeric(
+    data["Volume"],
+    errors="coerce"
+)
+
+
+data["RSI"] = calculate_rsi(close)
+
+
+# -----------------------------
+# VWAP
+# -----------------------------
+
+typical_price = (
+    high + low + close
+) / 3
+
+cumulative_volume = volume.cumsum()
+
+data["VWAP"] = (
+    (typical_price * volume).cumsum()
+    / cumulative_volume.replace(0, pd.NA)
+)
+
+
+# -----------------------------
+# CURRENT VALUES
+# -----------------------------
+
+latest_price = float(close.iloc[-1])
+
+previous_price = float(close.iloc[-2])
+
+change = latest_price - previous_price
+
+change_pct = (
+    change / previous_price
+) * 100
+
+
+latest_rsi = data["RSI"].iloc[-1]
+
+latest_vwap = data["VWAP"].iloc[-1]
+
+
+if pd.isna(latest_rsi):
+    latest_rsi = 50
+
+
+if pd.isna(latest_vwap):
+    latest_vwap = latest_price
+
+
+# -----------------------------
+# VOLUME ANALYSIS
+# -----------------------------
+
+avg_volume = volume.tail(20).mean()
+
+latest_volume = volume.iloc[-1]
+
+
+if latest_volume > avg_volume * 1.5:
+
+    volume_status = "HIGH VOLUME"
+    volume_score = 10
+
+elif latest_volume > avg_volume:
+
+    volume_status = "ABOVE AVERAGE"
+    volume_score = 5
+
 else:
+
     volume_status = "NORMAL"
+    volume_score = 0
 
 
-# =========================
-# OPTION CHAIN
-# =========================
+# -----------------------------
+# TREND
+# -----------------------------
 
-option_data = pd.DataFrame()
+ema20 = close.ewm(
+    span=20,
+    adjust=False
+).mean()
 
-option_spot = None
-
-option_error = None
-
-try:
-
-    option_data, option_spot = get_nifty_option_chain()
-
-    if not option_data.empty and option_spot:
-
-        atm_data = get_atm_option_chain(
-            option_data,
-            option_spot,
-            strikes_each_side=4
-        )
-
-        option_pcr = calculate_pcr(atm_data)
-
-        option_bias, option_score = option_sentiment(
-            atm_data
-        )
-
-    else:
-
-        atm_data = pd.DataFrame()
-
-        option_pcr = None
-
-        option_bias = "NO DATA"
-
-        option_score = 50
-
-except Exception as e:
-
-    atm_data = pd.DataFrame()
-
-    option_pcr = None
-
-    option_bias = "NO DATA"
-
-    option_score = 50
-
-    option_error = str(e)
+ema50 = close.ewm(
+    span=50,
+    adjust=False
+).mean()
 
 
-# =========================
-# PRICE SENTIMENT
-# =========================
+latest_ema20 = float(ema20.iloc[-1])
+latest_ema50 = float(ema50.iloc[-1])
 
-price_score = 50
 
-if price > latest_vwap:
-    price_score += 15
+# -----------------------------
+# SENTIMENT SCORE
+# -----------------------------
+
+score = 50
+
+
+# Price vs VWAP
+if latest_price > latest_vwap:
+
+    score += 15
+
 else:
-    price_score -= 15
+
+    score -= 15
 
 
+# RSI
 if latest_rsi > 60:
-    price_score += 20
+
+    score += 20
 
 elif latest_rsi < 40:
-    price_score -= 20
+
+    score -= 20
 
 
-if latest_volume > average_volume:
-    price_score += 10
+# EMA trend
+if latest_ema20 > latest_ema50:
+
+    score += 10
+
+elif latest_ema20 < latest_ema50:
+
+    score -= 10
 
 
-price_score = max(
-    0,
-    min(100, price_score)
-)
+# Volume
+if latest_price > latest_vwap:
 
-
-# =========================
-# COMBINED SENTIMENT
-# =========================
-
-if not atm_data.empty:
-
-    final_score = round(
-        (price_score * 0.60)
-        +
-        (option_score * 0.40)
-    )
+    score += volume_score
 
 else:
 
-    final_score = price_score
+    score -= volume_score
 
 
-final_score = max(
+# Keep score between 0 and 100
+score = max(
     0,
-    min(100, final_score)
+    min(100, round(score))
 )
 
 
-if final_score >= 65:
+# -----------------------------
+# MARKET BIAS
+# -----------------------------
 
-    sentiment = "🟢 BULLISH"
+if score >= 65:
 
-elif final_score <= 35:
+    bias = "BULLISH"
+    bias_text = "UPSIDE BIAS"
 
-    sentiment = "🔴 BEARISH"
+elif score <= 35:
+
+    bias = "BEARISH"
+    bias_text = "DOWNSIDE BIAS"
 
 else:
 
-    sentiment = "🟡 NEUTRAL"
+    bias = "NEUTRAL"
+    bias_text = "SIDEWAYS / NEUTRAL"
 
 
-# =========================
-# MAIN DASHBOARD
-# =========================
+# -----------------------------
+# SUPPORT / RESISTANCE
+# -----------------------------
+
+recent_high = float(
+    high.tail(50).max()
+)
+
+recent_low = float(
+    low.tail(50).min()
+)
+
+
+support = round(
+    recent_low / 50
+) * 50
+
+
+resistance = round(
+    recent_high / 50
+) * 50
+
+
+# -----------------------------
+# DASHBOARD
+# -----------------------------
+
+st.divider()
 
 col1, col2 = st.columns(2)
 
@@ -241,8 +299,8 @@ with col1:
 
     st.metric(
         "NIFTY 50",
-        f"{price:,.2f}",
-        f"{change:+,.2f} ({change_pct:+.2f}%)"
+        f"{latest_price:,.2f}",
+        f"{change:+.2f} ({change_pct:+.2f}%)"
     )
 
 
@@ -250,17 +308,45 @@ with col2:
 
     st.metric(
         "Sentiment Score",
-        f"{final_score} / 100",
-        sentiment
+        f"{score} / 100",
+        bias
     )
 
 
 st.divider()
 
 
-# =========================
+# -----------------------------
+# MARKET BIAS
+# -----------------------------
+
+st.subheader(
+    f"🎯 Current Market Bias: {bias_text}"
+)
+
+
+if bias == "BULLISH":
+
+    st.success(
+        "🟢 Market में bullish conditions दिखाई दे रही हैं।"
+    )
+
+elif bias == "BEARISH":
+
+    st.error(
+        "🔴 Market में bearish conditions दिखाई दे रही हैं।"
+    )
+
+else:
+
+    st.warning(
+        "🟡 Market अभी neutral/sideways conditions में है।"
+    )
+
+
+# -----------------------------
 # INDICATORS
-# =========================
+# -----------------------------
 
 st.subheader("📊 Market Indicators")
 
@@ -294,156 +380,96 @@ with c3:
 
 with c4:
 
-    if option_pcr is not None:
-
-        st.metric(
-            "PCR",
-            f"{option_pcr:.2f}"
-        )
-
-    else:
-
-        st.metric(
-            "PCR",
-            "N/A"
-        )
-
-
-st.divider()
-
-
-# =========================
-# OPTION CHAIN
-# =========================
-
-st.subheader("📊 NIFTY OPTION CHAIN")
-
-if not atm_data.empty:
-
-    st.success(
-        f"Option Chain Connected • Spot: {option_spot:,.2f}"
+    trend = (
+        "UPTREND"
+        if latest_ema20 > latest_ema50
+        else "DOWNTREND"
     )
 
-    st.write(
-        f"### Option Sentiment: {option_bias}"
+    st.metric(
+        "Trend",
+        trend
     )
 
-    st.write(
-        f"**Option Score: {option_score}/100**"
+
+# -----------------------------
+# SUPPORT / RESISTANCE
+# -----------------------------
+
+st.subheader("📍 Support & Resistance")
+
+
+s1, s2 = st.columns(2)
+
+
+with s1:
+
+    st.metric(
+        "Support",
+        f"{support:,.0f}"
     )
 
-    display_data = atm_data[
-        [
-            "Strike",
-            "CE_OI",
-            "CE_Delta_OI",
-            "CE_Volume",
-            "PE_OI",
-            "PE_Delta_OI",
-            "PE_Volume"
-        ]
-    ].copy()
 
-    display_data.columns = [
-        "Strike",
-        "CE OI",
-        "CE ΔOI",
-        "CE Volume",
-        "PE OI",
-        "PE ΔOI",
-        "PE Volume"
-    ]
+with s2:
 
-    st.dataframe(
-        display_data,
-        use_container_width=True,
-        hide_index=True
+    st.metric(
+        "Resistance",
+        f"{resistance:,.0f}"
+    )
+
+
+# -----------------------------
+# AI COMMENTARY
+# -----------------------------
+
+st.subheader("🧠 Market Commentary")
+
+
+if bias == "BULLISH":
+
+    commentary = (
+        f"NIFTY price VWAP के ऊपर है और RSI "
+        f"{latest_rsi:.1f} है। Short-term momentum "
+        "bullish दिखाई दे रहा है। Volume और trend "
+        "को confirmation के लिए monitor करें।"
+    )
+
+elif bias == "BEARISH":
+
+    commentary = (
+        f"NIFTY price VWAP के नीचे है और RSI "
+        f"{latest_rsi:.1f} है। Short-term momentum "
+        "weak दिखाई दे रहा है। Support levels पर "
+        "price reaction को monitor करें।"
     )
 
 else:
 
-    st.warning(
-        "⚠️ अभी NSE Option Chain data उपलब्ध नहीं है। "
-        "NIFTY price analysis फिर भी चल रहा है।"
+    commentary = (
+        f"NIFTY का current sentiment neutral है। "
+        f"RSI {latest_rsi:.1f} है और price/VWAP "
+        "relationship को अगली direction के लिए monitor करें।"
     )
 
 
-st.divider()
+st.info(commentary)
 
 
-# =========================
-# MARKET BIAS
-# =========================
-
-st.subheader("🎯 Current Market Bias")
-
-
-if final_score >= 65:
-
-    st.success(
-        f"📈 UPSIDE BIAS — {final_score}/100"
-    )
-
-elif final_score <= 35:
-
-    st.error(
-        f"📉 DOWNSIDE BIAS — {final_score}/100"
-    )
-
-else:
-
-    st.info(
-        f"➡️ NEUTRAL — {final_score}/100"
-    )
-
-
-# =========================
-# COMMENTARY
-# =========================
-
-st.subheader("🤖 AI Market Commentary")
-
-
-if final_score >= 65:
-
-    st.write(
-        "NIFTY का वर्तमान sentiment bullish है। "
-        "Price, VWAP, momentum और उपलब्ध option-chain "
-        "signals को मिलाकर buyers का pressure दिखाई दे रहा है।"
-    )
-
-elif final_score <= 35:
-
-    st.write(
-        "NIFTY का वर्तमान sentiment bearish है। "
-        "Price, VWAP, momentum और उपलब्ध option-chain "
-        "signals sellers के pressure की ओर संकेत कर रहे हैं।"
-    )
-
-else:
-
-    st.write(
-        "NIFTY का sentiment फिलहाल neutral है। "
-        "Market में स्पष्ट direction नहीं है। "
-        "अधिक confirmation का इंतजार करना बेहतर है।"
-    )
-
-
-st.divider()
-
+# -----------------------------
+# WARNING
+# -----------------------------
 
 st.caption(
-    "⚠️ यह market-analysis tool है। "
-    "यह निश्चित भविष्यवाणी या investment advice नहीं है।"
+    "⚠️ यह dashboard market indicators के आधार पर "
+    "sentiment estimate करता है। यह guaranteed prediction "
+    "या investment advice नहीं है।"
 )
 
 
-# =========================
-# REFRESH
-# =========================
+# -----------------------------
+# AUTO REFRESH
+# -----------------------------
 
-if st.button("🔄 Refresh Live Data"):
-
-    st.cache_data.clear()
-
-    st.rerun()
+st.caption(
+    "🔄 Data लगभग हर 60 seconds में refresh होता है।"
+)

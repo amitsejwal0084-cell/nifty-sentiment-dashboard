@@ -9,31 +9,29 @@ from kiteconnect import KiteConnect
 # =====================================================
 
 st.set_page_config(
-    page_title="NIFTY Trading Dashboard",
+    page_title="NIFTY Professional Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-
 st.title("📈 NIFTY PROFESSIONAL TRADING DASHBOARD")
 
 st.caption(
-    "Zerodha Kite Connect • Live Market Data"
+    "Zerodha Kite Connect • Real Market Data"
 )
 
 
 # =====================================================
-# KITE CREDENTIALS
+# KITE SETTINGS
 # =====================================================
 
 API_KEY = st.secrets.get("KITE_API_KEY")
 API_SECRET = st.secrets.get("KITE_API_SECRET")
 
-
 if not API_KEY or not API_SECRET:
 
     st.error(
-        "KITE_API_KEY या KITE_API_SECRET नहीं मिला।"
+        "KITE_API_KEY / KITE_API_SECRET Streamlit Secrets में नहीं मिले।"
     )
 
     st.stop()
@@ -106,7 +104,7 @@ kite.set_access_token(
 
 
 # =====================================================
-# CONNECTION TEST
+# CONNECTION
 # =====================================================
 
 try:
@@ -136,7 +134,6 @@ st.success(
     f"🟢 Connected: {user_name}"
 )
 
-
 st.caption(
     "Last Update: "
     + datetime.now().strftime(
@@ -150,17 +147,16 @@ if st.button("🔄 Refresh Now"):
     st.rerun()
 
 
+# =====================================================
+# MARKET DATA
+# =====================================================
+
 st.divider()
-
-
-# =====================================================
-# LIVE MARKET DATA
-# =====================================================
 
 st.subheader("📊 Live Market")
 
 
-symbols = [
+market_symbols = [
     "NSE:NIFTY 50",
     "NSE:NIFTY BANK",
     "BSE:SENSEX",
@@ -171,7 +167,9 @@ symbols = [
 
 try:
 
-    market = kite.quote(symbols)
+    market = kite.quote(
+        market_symbols
+    )
 
 except Exception as e:
 
@@ -184,12 +182,10 @@ except Exception as e:
 
 def get_price(symbol):
 
-    data = market.get(
+    return market.get(
         symbol,
         {}
-    )
-
-    return data.get(
+    ).get(
         "last_price",
         0
     )
@@ -274,7 +270,7 @@ with c5:
 
 
 # =====================================================
-# NIFTY PRICE
+# NIFTY SPOT
 # =====================================================
 
 nifty_price = get_price(
@@ -282,15 +278,14 @@ nifty_price = get_price(
 )
 
 
+# =====================================================
+# NFO INSTRUMENTS
+# =====================================================
+
 st.divider()
 
-
-# =====================================================
-# OPTION CHAIN
-# =====================================================
-
 st.subheader(
-    "⛓️ NIFTY OPTION CHAIN"
+    "⛓️ NIFTY LIVE OPTION CHAIN"
 )
 
 
@@ -300,188 +295,293 @@ try:
         "NFO"
     )
 
-    instrument_df = pd.DataFrame(
+    instruments_df = pd.DataFrame(
         instruments
     )
 
 except Exception as e:
 
-    instrument_df = pd.DataFrame()
-
     st.error(
         f"NFO Instrument Error: {e}"
     )
 
+    st.stop()
 
-if not instrument_df.empty:
 
-    instrument_df["expiry"] = pd.to_datetime(
-        instrument_df["expiry"],
-        errors="coerce"
-    ).dt.date
+if instruments_df.empty:
 
-    instrument_df["strike"] = pd.to_numeric(
-        instrument_df["strike"],
-        errors="coerce"
+    st.warning(
+        "NFO instrument data उपलब्ध नहीं है।"
     )
 
-    today = datetime.now().date()
-
-
-    options = instrument_df[
-        (instrument_df["name"] == "NIFTY") &
-        (
-            instrument_df["instrument_type"]
-            .isin(["CE", "PE"])
-        ) &
-        (
-            instrument_df["expiry"] >= today
-        )
-    ].copy()
-
-
-    if not options.empty:
-
-        expiry = sorted(
-            options["expiry"]
-            .dropna()
-            .unique()
-        )[0]
-
-
-        options = options[
-            options["expiry"] == expiry
-        ].copy()
-
-
-        atm = round(
-            nifty_price / 50
-        ) * 50
-
-
-        low = atm - 500
-        high = atm + 500
-
-
-        options = options[
-            (options["strike"] >= low) &
-            (options["strike"] <= high)
-        ].copy()
-
-
-        symbols = [
-            "NFO:" + symbol
-            for symbol in options[
-                "tradingsymbol"
-            ]
-        ]
-
-
-        quotes = {}
-
-
-        for start in range(
-            0,
-            len(symbols),
-            100
-        ):
-
-            batch = symbols[
-                start:start + 100
-            ]
-
-            try:
-
-                response = kite.quote(
-                    batch
-                )
-
-                quotes.update(
-                    response
-                )
-
-            except Exception:
-                pass
-
-
-        rows = []
-
-
-        for _, row in options.iterrows():
-
-            trading_symbol = row[
-                "tradingsymbol"
-            ]
-
-            quote = quotes.get(
-                "NFO:" + trading_symbol,
-                {}
-            )
-
-
-            rows.append({
-
-                "Strike": row["strike"],
-
-                "Type": row[
-                    "instrument_type"
-                ],
-
-                "Symbol": trading_symbol,
-
-                "LTP": quote.get(
-                    "last_price"
-                ),
-
-                "OI": quote.get(
-                    "oi"
-                ),
-
-                "Volume": quote.get(
-                    "volume"
-                )
-
-            })
-
-
-        option_data = pd.DataFrame(
-            rows
-        )
-
-
-    else:
-
-        option_data = pd.DataFrame()
-
-
-else:
-
-    option_data = pd.DataFrame()
+    st.stop()
 
 
 # =====================================================
-# OPTION SUMMARY
+# PREPARE INSTRUMENT DATA
+# =====================================================
+
+instruments_df["expiry"] = pd.to_datetime(
+    instruments_df["expiry"],
+    errors="coerce"
+).dt.date
+
+
+instruments_df["strike"] = pd.to_numeric(
+    instruments_df["strike"],
+    errors="coerce"
+)
+
+
+today = datetime.now().date()
+
+
+options = instruments_df[
+    (instruments_df["name"] == "NIFTY") &
+    (
+        instruments_df["instrument_type"]
+        .isin(["CE", "PE"])
+    ) &
+    (
+        instruments_df["expiry"] >= today
+    )
+].copy()
+
+
+if options.empty:
+
+    st.warning(
+        "NIFTY option contracts नहीं मिले।"
+    )
+
+    st.stop()
+
+
+# =====================================================
+# NEAREST EXPIRY
+# =====================================================
+
+nearest_expiry = sorted(
+    options["expiry"]
+    .dropna()
+    .unique()
+)[0]
+
+
+options = options[
+    options["expiry"] == nearest_expiry
+].copy()
+
+
+st.info(
+    f"📅 Nearest Expiry: {nearest_expiry}"
+)
+
+
+# =====================================================
+# ATM
+# =====================================================
+
+atm = round(
+    nifty_price / 50
+) * 50
+
+
+st.write(
+    f"**NIFTY Spot:** {nifty_price:,.2f}  |  "
+    f"**ATM:** {atm:,.0f}"
+)
+
+
+# =====================================================
+# ATM ±10 STRIKES
+# =====================================================
+
+strike_step = 50
+
+low_strike = (
+    atm - (10 * strike_step)
+)
+
+high_strike = (
+    atm + (10 * strike_step)
+)
+
+
+options = options[
+    (options["strike"] >= low_strike) &
+    (options["strike"] <= high_strike)
+].copy()
+
+
+# =====================================================
+# QUOTES
+# =====================================================
+
+quote_symbols = [
+    "NFO:" + symbol
+    for symbol in options[
+        "tradingsymbol"
+    ]
+]
+
+
+quotes = {}
+
+
+for start in range(
+    0,
+    len(quote_symbols),
+    100
+):
+
+    batch = quote_symbols[
+        start:start + 100
+    ]
+
+    try:
+
+        response = kite.quote(
+            batch
+        )
+
+        if response:
+
+            quotes.update(
+                response
+            )
+
+    except Exception as e:
+
+        st.warning(
+            f"Quote batch error: {e}"
+        )
+
+
+# =====================================================
+# BUILD OPTION DATA
+# =====================================================
+
+rows = []
+
+
+for _, row in options.iterrows():
+
+    symbol = row[
+        "tradingsymbol"
+    ]
+
+    key = (
+        "NFO:"
+        + symbol
+    )
+
+    quote = quotes.get(
+        key,
+        {}
+    )
+
+
+    depth = quote.get(
+        "depth",
+        {}
+    )
+
+
+    buy_depth = depth.get(
+        "buy",
+        []
+    )
+
+
+    sell_depth = depth.get(
+        "sell",
+        []
+    )
+
+
+    bid = None
+
+    ask = None
+
+
+    if buy_depth:
+
+        bid = buy_depth[0].get(
+            "price"
+        )
+
+
+    if sell_depth:
+
+        ask = sell_depth[0].get(
+            "price"
+        )
+
+
+    rows.append({
+
+        "Strike": row[
+            "strike"
+        ],
+
+        "Type": row[
+            "instrument_type"
+        ],
+
+        "Symbol": symbol,
+
+        "LTP": quote.get(
+            "last_price"
+        ),
+
+        "OI": quote.get(
+            "oi"
+        ),
+
+        "Volume": quote.get(
+            "volume"
+        ),
+
+        "Bid": bid,
+
+        "Ask": ask
+
+    })
+
+
+option_data = pd.DataFrame(
+    rows
+)
+
+
+# =====================================================
+# SORT
 # =====================================================
 
 if not option_data.empty:
 
-    ce = option_data[
+    option_data = option_data.sort_values(
+        ["Strike", "Type"]
+    ).reset_index(
+        drop=True
+    )
+
+
+# =====================================================
+# PCR
+# =====================================================
+
+if not option_data.empty:
+
+    ce_oi = option_data[
         option_data["Type"] == "CE"
-    ]
+    ]["OI"].fillna(0).sum()
 
-    pe = option_data[
+
+    pe_oi = option_data[
         option_data["Type"] == "PE"
-    ]
-
-
-    ce_oi = ce["OI"].fillna(
-        0
-    ).sum()
-
-
-    pe_oi = pe["OI"].fillna(
-        0
-    ).sum()
+    ]["OI"].fillna(0).sum()
 
 
     if ce_oi > 0:
@@ -492,70 +592,99 @@ if not option_data.empty:
 
         pcr = None
 
+else:
 
-    if not ce.empty:
-
-        resistance = ce.loc[
-            ce["OI"].fillna(0).idxmax(),
-            "Strike"
-        ]
-
-    else:
-
-        resistance = None
+    pcr = None
 
 
-    if not pe.empty:
+# =====================================================
+# SUPPORT
+# =====================================================
 
-        support = pe.loc[
-            pe["OI"].fillna(0).idxmax(),
-            "Strike"
-        ]
-
-    else:
-
-        support = None
+puts = option_data[
+    option_data["Type"] == "PE"
+].copy()
 
 
-    strikes = sorted(
-        option_data[
-            "Strike"
-        ].dropna().unique()
-    )
+if not puts.empty:
+
+    support = puts.loc[
+        puts["OI"].fillna(0).idxmax(),
+        "Strike"
+    ]
+
+else:
+
+    support = None
 
 
-    max_pain = None
+# =====================================================
+# RESISTANCE
+# =====================================================
+
+calls = option_data[
+    option_data["Type"] == "CE"
+].copy()
 
 
-    if strikes:
+if not calls.empty:
 
-        pain = {}
+    resistance = calls.loc[
+        calls["OI"].fillna(0).idxmax(),
+        "Strike"
+    ]
 
+else:
 
-        for test_strike in strikes:
-
-            call_pain = (
-                (
-                    test_strike
-                    - ce["Strike"]
-                ).clip(lower=0)
-                * ce["OI"].fillna(0)
-            ).sum()
+    resistance = None
 
 
-            put_pain = (
-                (
-                    pe["Strike"]
-                    - test_strike
-                ).clip(lower=0)
-                * pe["OI"].fillna(0)
-            ).sum()
+# =====================================================
+# MAX PAIN
+# =====================================================
+
+max_pain = None
 
 
-            pain[test_strike] = (
-                call_pain + put_pain
-            )
+strikes = sorted(
+    option_data[
+        "Strike"
+    ].dropna().unique()
+)
 
+
+if strikes:
+
+    pain = {}
+
+
+    for test_strike in strikes:
+
+        call_pain = (
+            (
+                test_strike
+                - calls["Strike"]
+            ).clip(lower=0)
+            * calls["OI"].fillna(0)
+        ).sum()
+
+
+        put_pain = (
+            (
+                puts["Strike"]
+                - test_strike
+            ).clip(lower=0)
+            * puts["OI"].fillna(0)
+        ).sum()
+
+
+        pain[test_strike] = (
+            call_pain
+            + put_pain
+        )
+
+
+    if pain:
 
         max_pain = min(
             pain,
@@ -563,17 +692,16 @@ if not option_data.empty:
         )
 
 
-else:
-
-    pcr = None
-    support = None
-    resistance = None
-    max_pain = None
-
-
 # =====================================================
-# SUMMARY CARDS
+# SUMMARY
 # =====================================================
+
+st.divider()
+
+st.subheader(
+    "📌 Option Summary"
+)
+
 
 s1, s2, s3, s4, s5 = st.columns(5)
 
@@ -627,27 +755,88 @@ with s5:
 
 
 # =====================================================
-# OPTION TABLE
+# CE TABLE
 # =====================================================
 
 st.divider()
 
 st.subheader(
-    "📋 Live Option Chain"
+    "🟢 CALL OPTIONS — CE"
 )
 
 
-if not option_data.empty:
+ce_display = option_data[
+    option_data["Type"] == "CE"
+].copy()
 
-    st.dataframe(
-        option_data,
-        use_container_width=True,
-        hide_index=True
+
+st.dataframe(
+    ce_display,
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# =====================================================
+# PE TABLE
+# =====================================================
+
+st.subheader(
+    "🔴 PUT OPTIONS — PE"
+)
+
+
+pe_display = option_data[
+    option_data["Type"] == "PE"
+].copy()
+
+
+st.dataframe(
+    pe_display,
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# =====================================================
+# AUTO REFRESH
+# =====================================================
+
+st.divider()
+
+auto_refresh = st.checkbox(
+    "⏱️ 30 सेकंड Auto Refresh"
+)
+
+
+if auto_refresh:
+
+    st.markdown(
+        """
+        <meta http-equiv="refresh" content="30">
+        """,
+        unsafe_allow_html=True
     )
 
-else:
 
-    st.warning(
+# =====================================================
+# FOOTER
+# =====================================================
+
+st.divider()
+
+st.caption(
+    "🟢 Data Source: Zerodha Kite Connect"
+)
+
+st.caption(
+    "Option data is a live market snapshot. "
+    "Tick-by-tick WebSocket streaming will be added separately."
+)
+
+st.caption(
+    "यह dashboard केवल market-data analysis के लिए है।"
+    )warning(
         "Option Chain Data उपलब्ध नहीं है।"
     )
 

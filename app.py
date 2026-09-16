@@ -4,51 +4,37 @@ from datetime import datetime
 from kiteconnect import KiteConnect
 
 
-# =====================================================
-# PAGE
-# =====================================================
-
 st.set_page_config(
-    page_title="NIFTY Professional Dashboard",
+    page_title="NIFTY Live Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-st.title("📈 NIFTY PROFESSIONAL TRADING DASHBOARD")
 
-st.caption(
-    "Zerodha Kite Connect • Real Market Data"
-)
+st.title("📈 NIFTY LIVE TRADING DASHBOARD")
+st.caption("Zerodha Kite Connect • Real Market Data")
 
 
 # =====================================================
-# KITE SETTINGS
+# KITE
 # =====================================================
 
 API_KEY = st.secrets.get("KITE_API_KEY")
 API_SECRET = st.secrets.get("KITE_API_SECRET")
 
 if not API_KEY or not API_SECRET:
-
-    st.error(
-        "KITE_API_KEY / KITE_API_SECRET Streamlit Secrets में नहीं मिले।"
-    )
-
+    st.error("Kite API credentials नहीं मिले।")
     st.stop()
 
 
-kite = KiteConnect(
-    api_key=API_KEY
-)
+kite = KiteConnect(api_key=API_KEY)
 
 
 # =====================================================
 # LOGIN
 # =====================================================
 
-access_token = st.session_state.get(
-    "access_token"
-)
+access_token = st.session_state.get("access_token")
 
 
 if not access_token:
@@ -68,24 +54,18 @@ if not access_token:
 
         try:
 
-            session_data = kite.generate_session(
+            session = kite.generate_session(
                 request_token,
                 api_secret=API_SECRET
             )
 
-            access_token = session_data[
-                "access_token"
-            ]
-
-            st.session_state[
-                "access_token"
-            ] = access_token
+            st.session_state["access_token"] = (
+                session["access_token"]
+            )
 
             st.query_params.clear()
 
-            st.success(
-                "✅ Kite Login Successful"
-            )
+            st.success("✅ Kite Login Successful")
 
             st.rerun()
 
@@ -98,22 +78,19 @@ if not access_token:
     st.stop()
 
 
-kite.set_access_token(
-    access_token
-)
+kite.set_access_token(access_token)
 
 
 # =====================================================
-# CONNECTION
+# CONNECTION TEST
 # =====================================================
 
 try:
 
     profile = kite.profile()
 
-    user_name = profile.get(
-        "user_name",
-        "Kite User"
+    st.success(
+        f"🟢 Connected: {profile.get('user_name', 'Kite User')}"
     )
 
 except Exception as e:
@@ -130,10 +107,6 @@ except Exception as e:
     st.stop()
 
 
-st.success(
-    f"🟢 Connected: {user_name}"
-)
-
 st.caption(
     "Last Update: "
     + datetime.now().strftime(
@@ -142,13 +115,13 @@ st.caption(
 )
 
 
-if st.button("🔄 Refresh Now"):
+if st.button("🔄 Refresh"):
 
     st.rerun()
 
 
 # =====================================================
-# MARKET DATA
+# LIVE INDICES
 # =====================================================
 
 st.divider()
@@ -156,7 +129,7 @@ st.divider()
 st.subheader("📊 Live Market")
 
 
-market_symbols = [
+index_symbols = [
     "NSE:NIFTY 50",
     "NSE:NIFTY BANK",
     "BSE:SENSEX",
@@ -167,9 +140,7 @@ market_symbols = [
 
 try:
 
-    market = kite.quote(
-        market_symbols
-    )
+    market = kite.quote(index_symbols)
 
 except Exception as e:
 
@@ -180,7 +151,7 @@ except Exception as e:
     st.stop()
 
 
-def get_price(symbol):
+def get_ltp(symbol):
 
     return market.get(
         symbol,
@@ -191,7 +162,7 @@ def get_price(symbol):
     )
 
 
-def get_change(symbol):
+def get_percent_change(symbol):
 
     data = market.get(
         symbol,
@@ -228,8 +199,8 @@ with c1:
 
     st.metric(
         "NIFTY 50",
-        f"{get_price('NSE:NIFTY 50'):,.2f}",
-        f"{get_change('NSE:NIFTY 50'):+.2f}%"
+        f"{get_ltp('NSE:NIFTY 50'):,.2f}",
+        f"{get_percent_change('NSE:NIFTY 50'):+.2f}%"
     )
 
 
@@ -237,8 +208,8 @@ with c2:
 
     st.metric(
         "BANK NIFTY",
-        f"{get_price('NSE:NIFTY BANK'):,.2f}",
-        f"{get_change('NSE:NIFTY BANK'):+.2f}%"
+        f"{get_ltp('NSE:NIFTY BANK'):,.2f}",
+        f"{get_percent_change('NSE:NIFTY BANK'):+.2f}%"
     )
 
 
@@ -246,8 +217,8 @@ with c3:
 
     st.metric(
         "SENSEX",
-        f"{get_price('BSE:SENSEX'):,.2f}",
-        f"{get_change('BSE:SENSEX'):+.2f}%"
+        f"{get_ltp('BSE:SENSEX'):,.2f}",
+        f"{get_percent_change('BSE:SENSEX'):+.2f}%"
     )
 
 
@@ -255,8 +226,8 @@ with c4:
 
     st.metric(
         "NIFTY NEXT 50",
-        f"{get_price('NSE:NIFTY NEXT 50'):,.2f}",
-        f"{get_change('NSE:NIFTY NEXT 50'):+.2f}%"
+        f"{get_ltp('NSE:NIFTY NEXT 50'):,.2f}",
+        f"{get_percent_change('NSE:NIFTY NEXT 50'):+.2f}%"
     )
 
 
@@ -264,71 +235,61 @@ with c5:
 
     st.metric(
         "INDIA VIX",
-        f"{get_price('NSE:INDIA VIX'):,.2f}",
-        f"{get_change('NSE:INDIA VIX'):+.2f}%"
+        f"{get_ltp('NSE:INDIA VIX'):,.2f}",
+        f"{get_percent_change('NSE:INDIA VIX'):+.2f}%"
     )
 
 
 # =====================================================
-# NIFTY SPOT
-# =====================================================
-
-nifty_price = get_price(
-    "NSE:NIFTY 50"
-)
-
-
-# =====================================================
-# NFO INSTRUMENTS
+# NIFTY OPTION CHAIN
 # =====================================================
 
 st.divider()
 
-st.subheader(
-    "⛓️ NIFTY LIVE OPTION CHAIN"
+st.subheader("⛓️ NIFTY LIVE OPTION CHAIN")
+
+
+nifty_price = get_ltp(
+    "NSE:NIFTY 50"
 )
 
 
 try:
 
-    instruments = kite.instruments(
-        "NFO"
-    )
+    instruments = kite.instruments("NFO")
 
-    instruments_df = pd.DataFrame(
-        instruments
-    )
+    df = pd.DataFrame(instruments)
 
 except Exception as e:
 
     st.error(
-        f"NFO Instrument Error: {e}"
+        f"NFO Error: {e}"
     )
 
     st.stop()
 
 
-if instruments_df.empty:
+if df.empty:
 
     st.warning(
-        "NFO instrument data उपलब्ध नहीं है।"
+        "NFO instruments उपलब्ध नहीं हैं।"
     )
 
     st.stop()
 
 
 # =====================================================
-# PREPARE INSTRUMENT DATA
+# FILTER NIFTY OPTIONS
 # =====================================================
 
-instruments_df["expiry"] = pd.to_datetime(
-    instruments_df["expiry"],
+df["expiry"] = pd.to_datetime(
+    df["expiry"],
     errors="coerce"
 ).dt.date
 
 
-instruments_df["strike"] = pd.to_numeric(
-    instruments_df["strike"],
+df["strike"] = pd.to_numeric(
+    df["strike"],
     errors="coerce"
 )
 
@@ -336,14 +297,14 @@ instruments_df["strike"] = pd.to_numeric(
 today = datetime.now().date()
 
 
-options = instruments_df[
-    (instruments_df["name"] == "NIFTY") &
+options = df[
+    (df["name"] == "NIFTY") &
     (
-        instruments_df["instrument_type"]
+        df["instrument_type"]
         .isin(["CE", "PE"])
     ) &
     (
-        instruments_df["expiry"] >= today
+        df["expiry"] >= today
     )
 ].copy()
 
@@ -351,7 +312,7 @@ options = instruments_df[
 if options.empty:
 
     st.warning(
-        "NIFTY option contracts नहीं मिले।"
+        "NIFTY options नहीं मिले।"
     )
 
     st.stop()
@@ -361,7 +322,7 @@ if options.empty:
 # NEAREST EXPIRY
 # =====================================================
 
-nearest_expiry = sorted(
+expiry = sorted(
     options["expiry"]
     .dropna()
     .unique()
@@ -369,12 +330,12 @@ nearest_expiry = sorted(
 
 
 options = options[
-    options["expiry"] == nearest_expiry
+    options["expiry"] == expiry
 ].copy()
 
 
 st.info(
-    f"📅 Nearest Expiry: {nearest_expiry}"
+    f"📅 Expiry: {expiry}"
 )
 
 
@@ -388,29 +349,18 @@ atm = round(
 
 
 st.write(
-    f"**NIFTY Spot:** {nifty_price:,.2f}  |  "
+    f"**NIFTY:** {nifty_price:,.2f}   |   "
     f"**ATM:** {atm:,.0f}"
 )
 
 
 # =====================================================
-# ATM ±10 STRIKES
+# ATM ±10
 # =====================================================
 
-strike_step = 50
-
-low_strike = (
-    atm - (10 * strike_step)
-)
-
-high_strike = (
-    atm + (10 * strike_step)
-)
-
-
 options = options[
-    (options["strike"] >= low_strike) &
-    (options["strike"] <= high_strike)
+    (options["strike"] >= atm - 500) &
+    (options["strike"] <= atm + 500)
 ].copy()
 
 
@@ -418,11 +368,9 @@ options = options[
 # QUOTES
 # =====================================================
 
-quote_symbols = [
+quote_keys = [
     "NFO:" + symbol
-    for symbol in options[
-        "tradingsymbol"
-    ]
+    for symbol in options["tradingsymbol"]
 ]
 
 
@@ -431,35 +379,29 @@ quotes = {}
 
 for start in range(
     0,
-    len(quote_symbols),
+    len(quote_keys),
     100
 ):
 
-    batch = quote_symbols[
+    batch = quote_keys[
         start:start + 100
     ]
 
     try:
 
-        response = kite.quote(
-            batch
-        )
+        result = kite.quote(batch)
 
-        if response:
-
-            quotes.update(
-                response
-            )
+        quotes.update(result)
 
     except Exception as e:
 
         st.warning(
-            f"Quote batch error: {e}"
+            f"Quote error: {e}"
         )
 
 
 # =====================================================
-# BUILD OPTION DATA
+# BUILD TABLE
 # =====================================================
 
 rows = []
@@ -467,20 +409,12 @@ rows = []
 
 for _, row in options.iterrows():
 
-    symbol = row[
-        "tradingsymbol"
-    ]
-
-    key = (
-        "NFO:"
-        + symbol
-    )
+    symbol = row["tradingsymbol"]
 
     quote = quotes.get(
-        key,
+        "NFO:" + symbol,
         {}
     )
-
 
     depth = quote.get(
         "depth",
@@ -488,13 +422,13 @@ for _, row in options.iterrows():
     )
 
 
-    buy_depth = depth.get(
+    buy = depth.get(
         "buy",
         []
     )
 
 
-    sell_depth = depth.get(
+    sell = depth.get(
         "sell",
         []
     )
@@ -505,29 +439,25 @@ for _, row in options.iterrows():
     ask = None
 
 
-    if buy_depth:
+    if buy:
 
-        bid = buy_depth[0].get(
+        bid = buy[0].get(
             "price"
         )
 
 
-    if sell_depth:
+    if sell:
 
-        ask = sell_depth[0].get(
+        ask = sell[0].get(
             "price"
         )
 
 
     rows.append({
 
-        "Strike": row[
-            "strike"
-        ],
+        "Strike": row["strike"],
 
-        "Type": row[
-            "instrument_type"
-        ],
+        "Type": row["instrument_type"],
 
         "Symbol": symbol,
 
@@ -556,32 +486,28 @@ option_data = pd.DataFrame(
 
 
 # =====================================================
-# SORT
+# SUMMARY
 # =====================================================
 
 if not option_data.empty:
 
-    option_data = option_data.sort_values(
-        ["Strike", "Type"]
-    ).reset_index(
-        drop=True
-    )
-
-
-# =====================================================
-# PCR
-# =====================================================
-
-if not option_data.empty:
-
-    ce_oi = option_data[
+    ce = option_data[
         option_data["Type"] == "CE"
-    ]["OI"].fillna(0).sum()
+    ]
 
-
-    pe_oi = option_data[
+    pe = option_data[
         option_data["Type"] == "PE"
-    ]["OI"].fillna(0).sum()
+    ]
+
+
+    ce_oi = ce["OI"].fillna(
+        0
+    ).sum()
+
+
+    pe_oi = pe["OI"].fillna(
+        0
+    ).sum()
 
 
     if ce_oi > 0:
@@ -592,118 +518,45 @@ if not option_data.empty:
 
         pcr = None
 
+
+    if not pe.empty:
+
+        support = pe.loc[
+            pe["OI"].fillna(0).idxmax(),
+            "Strike"
+        ]
+
+    else:
+
+        support = None
+
+
+    if not ce.empty:
+
+        resistance = ce.loc[
+            ce["OI"].fillna(0).idxmax(),
+            "Strike"
+        ]
+
+    else:
+
+        resistance = None
+
+
 else:
 
     pcr = None
-
-
-# =====================================================
-# SUPPORT
-# =====================================================
-
-puts = option_data[
-    option_data["Type"] == "PE"
-].copy()
-
-
-if not puts.empty:
-
-    support = puts.loc[
-        puts["OI"].fillna(0).idxmax(),
-        "Strike"
-    ]
-
-else:
-
     support = None
-
-
-# =====================================================
-# RESISTANCE
-# =====================================================
-
-calls = option_data[
-    option_data["Type"] == "CE"
-].copy()
-
-
-if not calls.empty:
-
-    resistance = calls.loc[
-        calls["OI"].fillna(0).idxmax(),
-        "Strike"
-    ]
-
-else:
-
     resistance = None
 
 
 # =====================================================
-# MAX PAIN
-# =====================================================
-
-max_pain = None
-
-
-strikes = sorted(
-    option_data[
-        "Strike"
-    ].dropna().unique()
-)
-
-
-if strikes:
-
-    pain = {}
-
-
-    for test_strike in strikes:
-
-        call_pain = (
-            (
-                test_strike
-                - calls["Strike"]
-            ).clip(lower=0)
-            * calls["OI"].fillna(0)
-        ).sum()
-
-
-        put_pain = (
-            (
-                puts["Strike"]
-                - test_strike
-            ).clip(lower=0)
-            * puts["OI"].fillna(0)
-        ).sum()
-
-
-        pain[test_strike] = (
-            call_pain
-            + put_pain
-        )
-
-
-    if pain:
-
-        max_pain = min(
-            pain,
-            key=pain.get
-        )
-
-
-# =====================================================
-# SUMMARY
+# SUMMARY CARDS
 # =====================================================
 
 st.divider()
 
-st.subheader(
-    "📌 Option Summary"
-)
-
-
-s1, s2, s3, s4, s5 = st.columns(5)
+s1, s2, s3, s4 = st.columns(4)
 
 
 with s1:
@@ -744,55 +597,35 @@ with s4:
     )
 
 
-with s5:
-
-    st.metric(
-        "Max Pain",
-        f"{max_pain:,.0f}"
-        if max_pain is not None
-        else "-"
-    )
-
-
 # =====================================================
-# CE TABLE
+# CE
 # =====================================================
 
 st.divider()
 
-st.subheader(
-    "🟢 CALL OPTIONS — CE"
-)
-
-
-ce_display = option_data[
-    option_data["Type"] == "CE"
-].copy()
+st.subheader("🟢 CALL — CE")
 
 
 st.dataframe(
-    ce_display,
+    option_data[
+        option_data["Type"] == "CE"
+    ],
     use_container_width=True,
     hide_index=True
 )
 
 
 # =====================================================
-# PE TABLE
+# PE
 # =====================================================
 
-st.subheader(
-    "🔴 PUT OPTIONS — PE"
-)
-
-
-pe_display = option_data[
-    option_data["Type"] == "PE"
-].copy()
+st.subheader("🔴 PUT — PE")
 
 
 st.dataframe(
-    pe_display,
+    option_data[
+        option_data["Type"] == "PE"
+    ],
     use_container_width=True,
     hide_index=True
 )
@@ -812,64 +645,19 @@ auto_refresh = st.checkbox(
 if auto_refresh:
 
     st.markdown(
-        """
-        <meta http-equiv="refresh" content="30">
-        """,
+        '<meta http-equiv="refresh" content="30">',
         unsafe_allow_html=True
     )
 
 
-# =====================================================
-# FOOTER
-# =====================================================
-
 st.divider()
 
 st.caption(
-    "🟢 Data Source: Zerodha Kite Connect"
+    "Data Source: Zerodha Kite Connect"
 )
 
 st.caption(
-    "Option data is a live market snapshot. "
-    "Tick-by-tick WebSocket streaming will be added separately."
-)
-
-st.caption(
-    "यह dashboard केवल market-data analysis के लिए है।"
-    )warning(
-        "Option Chain Data उपलब्ध नहीं है।"
-    )
-
-
-# =====================================================
-# AUTO REFRESH
-# =====================================================
-
-st.divider()
-
-auto_refresh = st.checkbox(
-    "⏱️ 30 सेकंड Auto Refresh"
-)
-
-
-if auto_refresh:
-
-    st.markdown(
-        """
-        <meta http-equiv="refresh" content="30">
-        """,
-        unsafe_allow_html=True
-    )
-
-
-# =====================================================
-# FOOTER
-# =====================================================
-
-st.divider()
-
-st.caption(
-    "🟢 Live data source: Zerodha Kite Connect"
+    "Live snapshot data • No simulated data"
 )
 
 st.caption(

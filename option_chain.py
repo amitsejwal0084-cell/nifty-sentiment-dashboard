@@ -1,223 +1,360 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
-from growwapi import GrowwAPI
+from datetime import date
+from kiteconnect import KiteConnect
 
 
-def get_groww_client():
-    token = st.secrets.get("GROWW_ACCESS_TOKEN")
+# =========================================================
+# KITE CLIENT
+# =========================================================
 
-    if not token:
+def get_kite_client():
+    api_key = st.secrets.get("KITE_API_KEY")
+    access_token = st.session_state.get("access_token")
+
+    if not api_key:
+        raise Exception("KITE_API_KEY Streamlit Secrets में नहीं मिला।")
+
+    if not access_token:
         raise Exception(
-            "GROWW_ACCESS_TOKEN Streamlit Secrets में नहीं मिला।"
+            "Kite access token नहीं मिला। पहले Kite Login करें।"
         )
 
-    return GrowwAPI(token)
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+
+    return kite
 
 
-def check_groww_permissions():
-    try:
-        groww = get_groww_client()
-        return groww.get_user_profile()
-    except Exception as e:
-        return {"error": str(e)}
+# =========================================================
+# NFO INSTRUMENTS
+# =========================================================
+
+@st.cache_data(ttl=3600)
+def load_nfo_instruments():
+
+    api_key = st.secrets.get("KITE_API_KEY")
+    access_token = st.session_state.get("access_token")
+
+    if not api_key or not access_token:
+        return pd.DataFrame()
+
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+
+    instruments = kite.instruments("NFO")
+
+    df = pd.DataFrame(instruments)
+
+    if df.empty:
+        return df
+
+    df["expiry"] = pd.to_datetime(
+        df["expiry"],
+        errors="coerce"
+    ).dt.date
+
+    df["strike"] = pd.to_numeric(
+        df["strike"],
+        errors="coerce"
+    )
+
+    return df
 
 
-def get_nearest_expiry():
+# =========================================================
+# FIND NEAREST NIFTY EXPIRY
+# =========================================================
+
+def get_nearest_nifty_expiry():
+
+    df = load_nfo_instruments()
+
+    if df.empty:
+        return None
+
     today = date.today()
 
-    days = (1 - today.weekday()) % 7
+    nifty = df[
+        (df["name"] == "NIFTY") &
+        (df["instrument_type"].isin(["CE", "PE"])) &
+        (df["expiry"] >= today)
+    ].copy()
 
-    if days == 0:
-        days = 7
+    if nifty.empty:
+        return None
 
-    expiry = today + timedelta(days=days)
+    return sorted(
+        nifty["expiry"].dropna().unique()
+    )[0]
 
-    return expiry.strftime("%Y-%m-%d")
+
+# =========================================================
+# GET NIFTY OPTION CONTRACTS
+# =========================================================
+
+def get_nifty_option_contracts():
+
+    df = load_nfo_instruments()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    expiry = get_nearest_nifty_expiry()
+
+    if expiry is None:
+        return pd.DataFrame()
+
+    options = df[
+        (df["name"] == "NIFTY") &
+        (df["expiry"] == expiry) &
+        (df["instrument_type"].isin(["CE", "PE"]))
+    ].copy()
+
+    return options
 
 
-def get_nifty_option_chain():
-    groww = get_groww_client()
+# =========================================================
+# GET ATM ± STRIKES
+# =========================================================
 
-    expiry_date = get_nearest_expiry()
+def get_atm_option_contracts(
+    spot_price,
+    strikes_each_side=5
+):
 
-    st.info(f"📅 NIFTY Expiry: {expiry_date}")
+    contracts = get_nifty_option_contracts()
 
-    try:
-        profile = groww.get_user_profile()
+    if contracts.empty or spot_price is None:
+        return pd.DataFrame()
 
-        if isinstance(profile, dict):
-            segments = profile.get("active_segments")
+    strike_interval = 50
 
-            if segments is not None:
-                st.write(
-                    f"📌 Active Segments: {segments}"
-                )
+    atm = round(
+        float(spot_price) / strike_interval
+    ) * strike_interval
 
-    except Exception as e:
-        st.warning(
-            f"⚠️ Groww Profile Check: {e}"
-        )
+    low = (
+        atm -
+        strikes_each_side * strike_interval
+    )
 
-    try:
-        response = groww.get_option_chain(
-            exchange=groww.EXCHANGE_NSE,
-            underlying="NIFTY",
-            expiry_date=expiry_date
-        )
+    high = (
+        atm +
+        strikes_each_side * strike_interval
+    )
 
-    except Exception as e:
-        st.error(
-            f"❌ Groww Option Chain API Error: {e}"
-        )
-        return pd.DataFrame(), None
+    result = contracts[
+        (contracts["strike"] >= low) &
+        (contracts["strike"] <= high)
+    ].copy()
 
-    if not isinstance(response, dict):
-        st.warning(
-            "⚠️ Groww response का format सही नहीं है।"
-        )
-        return pd.DataFrame(), None
+    result = result.sort_values(
+        ["strike", "instrument_type"]
+    )
 
-    spot = response.get("underlying_ltp")
+    return result
 
-    strikes = response.get("strikes", {})
+
+# =========================================================
+# LIVE OPTION QUOTES
+# =========================================================
+
+def get_live_option_chain(
+    spot_price,
+    strikes_each_side=5
+):
+
+    kite = get_kite_client()
+
+    contracts = get_atm_option_contracts(
+        spot_price,
+        strikes_each_side
+    )
+
+    if contracts.empty:
+        return pd.DataFrame()
+
+    tokens = contracts[
+        "instrument_token"
+    ].astype(int).tolist()
+
+    instrument_keys = [
+        f"NFO:{symbol}"
+        for symbol in contracts["tradingsymbol"]
+    ]
+
+    quotes = {}
+
+    # Kite quote requests are kept in manageable batches
+    batch_size = 100
+
+    for i in range(
+        0,
+        len(instrument_keys),
+        batch_size
+    ):
+
+        batch = instrument_keys[
+            i:i + batch_size
+        ]
+
+        response = kite.quote(batch)
+
+        if response:
+            quotes.update(response)
 
     rows = []
 
-    if isinstance(strikes, dict):
+    for _, contract in contracts.iterrows():
 
-        for strike, sides in strikes.items():
+        symbol = contract["tradingsymbol"]
 
-            if not isinstance(sides, dict):
-                continue
+        key = f"NFO:{symbol}"
 
-            for option_type in ("CE", "PE"):
+        quote = quotes.get(key, {})
 
-                contract = sides.get(option_type)
-
-                if not isinstance(contract, dict):
-                    continue
-
-                greeks = contract.get("greeks") or {}
-
-                rows.append(
-                    {
-                        "strike_price": float(strike),
-                        "option_type": option_type,
-                        "trading_symbol": contract.get(
-                            "trading_symbol"
-                        ),
-                        "ltp": contract.get("ltp"),
-                        "open_interest": contract.get(
-                            "open_interest", 0
-                        ),
-                        "volume": contract.get(
-                            "volume", 0
-                        ),
-                        "iv": greeks.get("iv"),
-                        "delta": greeks.get("delta"),
-                        "gamma": greeks.get("gamma"),
-                        "theta": greeks.get("theta"),
-                        "vega": greeks.get("vega"),
-                        "rho": greeks.get("rho"),
-                    }
-                )
-
-    df = pd.DataFrame(rows)
-
-    if df.empty:
-
-        st.warning(
-            "⚠️ Groww ने Option Chain data खाली भेजा।"
+        rows.append(
+            {
+                "strike": contract["strike"],
+                "type": contract["instrument_type"],
+                "symbol": symbol,
+                "token": contract["instrument_token"],
+                "ltp": quote.get(
+                    "last_price"
+                ),
+                "volume": quote.get(
+                    "volume"
+                ),
+                "oi": quote.get(
+                    "oi"
+                ),
+                "oi_day_high": quote.get(
+                    "oi_day_high"
+                ),
+                "oi_day_low": quote.get(
+                    "oi_day_low"
+                ),
+                "last_quantity": quote.get(
+                    "last_quantity"
+                ),
+                "average_price": quote.get(
+                    "average_price"
+                ),
+            }
         )
 
-        return df, spot
+    result = pd.DataFrame(rows)
 
-    st.success(
-        f"✅ Groww Option Chain मिला — "
-        f"{len(df)} contracts"
+    if result.empty:
+        return result
+
+    numeric_columns = [
+        "strike",
+        "ltp",
+        "volume",
+        "oi",
+        "oi_day_high",
+        "oi_day_low",
+        "last_quantity",
+        "average_price"
+    ]
+
+    for column in numeric_columns:
+
+        result[column] = pd.to_numeric(
+            result[column],
+            errors="coerce"
+        )
+
+    return result
+
+
+# =========================================================
+# PCR
+# =========================================================
+
+def calculate_pcr(option_data):
+
+    if option_data.empty:
+        return None
+
+    calls = option_data[
+        option_data["type"] == "CE"
+    ]
+
+    puts = option_data[
+        option_data["type"] == "PE"
+    ]
+
+    call_oi = calls["oi"].fillna(0).sum()
+    put_oi = puts["oi"].fillna(0).sum()
+
+    if call_oi <= 0:
+        return None
+
+    return round(
+        float(put_oi / call_oi),
+        2
     )
 
-    if spot is not None:
-        spot = float(spot)
 
-    return df, spot
+# =========================================================
+# MAX CALL / PUT OI
+# =========================================================
 
+def calculate_support_resistance(option_data):
 
-def get_atm_option_chain(
-    option_data,
-    option_spot,
-    strikes_each_side=4
-):
+    if option_data.empty:
+        return None, None
 
-    if option_data.empty or option_spot is None:
-        return pd.DataFrame()
-
-    df = option_data.copy()
-
-    df["strike_price"] = pd.to_numeric(
-        df["strike_price"],
-        errors="coerce"
-    )
-
-    df = df.dropna(
-        subset=["strike_price"]
-    )
-
-    atm = round(
-        float(option_spot) / 50
-    ) * 50
-
-    low = atm - strikes_each_side * 50
-
-    high = atm + strikes_each_side * 50
-
-    return df[
-        (df["strike_price"] >= low)
-        &
-        (df["strike_price"] <= high)
+    calls = option_data[
+        option_data["type"] == "CE"
     ].copy()
 
+    puts = option_data[
+        option_data["type"] == "PE"
+    ].copy()
 
-def calculate_pcr(atm_data):
+    resistance = None
+    support = None
 
-    if atm_data.empty:
-        return None
+    if not calls.empty:
 
-    df = atm_data.copy()
+        calls = calls.dropna(
+            subset=["oi"]
+        )
 
-    df["open_interest"] = pd.to_numeric(
-        df["open_interest"],
-        errors="coerce"
-    ).fillna(0)
+        if not calls.empty:
 
-    option_type = (
-        df["option_type"]
-        .astype(str)
-        .str.upper()
-    )
+            resistance = calls.loc[
+                calls["oi"].idxmax(),
+                "strike"
+            ]
 
-    call_oi = df.loc[
-        option_type == "CE",
-        "open_interest"
-    ].sum()
+    if not puts.empty:
 
-    put_oi = df.loc[
-        option_type == "PE",
-        "open_interest"
-    ].sum()
+        puts = puts.dropna(
+            subset=["oi"]
+        )
 
-    if call_oi == 0:
-        return None
+        if not puts.empty:
 
-    pcr = put_oi / call_oi
+            support = puts.loc[
+                puts["oi"].idxmax(),
+                "strike"
+            ]
 
-    return round(float(pcr), 2)
+    return support, resistance
 
 
-def option_sentiment(atm_data):
+# =========================================================
+# OPTION SENTIMENT
+# =========================================================
 
-    pcr = calculate_pcr(atm_data)
+def option_sentiment(option_data):
+
+    pcr = calculate_pcr(option_data)
 
     if pcr is None:
         return "NO DATA", 50
@@ -229,47 +366,3 @@ def option_sentiment(atm_data):
         return "BEARISH", 30
 
     return "NEUTRAL", 50
-
-
-def calculate_support_resistance(atm_data):
-
-    if atm_data.empty:
-        return None, None
-
-    df = atm_data.copy()
-
-    df["open_interest"] = pd.to_numeric(
-        df["open_interest"],
-        errors="coerce"
-    ).fillna(0)
-
-    option_type = (
-        df["option_type"]
-        .astype(str)
-        .str.upper()
-    )
-
-    calls = df[
-        option_type == "CE"
-    ].copy()
-
-    puts = df[
-        option_type == "PE"
-    ].copy()
-
-    resistance = None
-    support = None
-
-    if not calls.empty:
-        resistance = calls.loc[
-            calls["open_interest"].idxmax(),
-            "strike_price"
-        ]
-
-    if not puts.empty:
-        support = puts.loc[
-            puts["open_interest"].idxmax(),
-            "strike_price"
-        ]
-
-    return support, resistance

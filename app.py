@@ -1,15 +1,16 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+import numpy as np
+from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 
 
-# =====================================================
+# =========================================================
 # PAGE
-# =====================================================
+# =========================================================
 
 st.set_page_config(
-    page_title="NIFTY Live Dashboard",
+    page_title="NIFTY Live Trading Dashboard",
     page_icon="📈",
     layout="wide"
 )
@@ -18,9 +19,9 @@ st.title("📈 NIFTY LIVE TRADING DASHBOARD")
 st.caption("Zerodha Kite Connect • Real Market Data")
 
 
-# =====================================================
-# KITE CREDENTIALS
-# =====================================================
+# =========================================================
+# KITE
+# =========================================================
 
 API_KEY = st.secrets.get("KITE_API_KEY")
 API_SECRET = st.secrets.get("KITE_API_SECRET")
@@ -32,9 +33,9 @@ if not API_KEY or not API_SECRET:
 kite = KiteConnect(api_key=API_KEY)
 
 
-# =====================================================
+# =========================================================
 # LOGIN
-# =====================================================
+# =========================================================
 
 access_token = st.session_state.get("access_token")
 
@@ -52,7 +53,6 @@ if not access_token:
     if request_token:
 
         try:
-
             session_data = kite.generate_session(
                 request_token,
                 api_secret=API_SECRET
@@ -65,14 +65,10 @@ if not access_token:
             st.query_params.clear()
 
             st.success("✅ Kite Login Successful")
-
             st.rerun()
 
         except Exception as e:
-
-            st.error(
-                f"Kite Login Error: {e}"
-            )
+            st.error(f"Kite Login Error: {e}")
 
     st.stop()
 
@@ -80,9 +76,9 @@ if not access_token:
 kite.set_access_token(access_token)
 
 
-# =====================================================
-# CONNECTION TEST
-# =====================================================
+# =========================================================
+# CONNECTION
+# =========================================================
 
 try:
 
@@ -94,45 +90,28 @@ try:
 
 except Exception as e:
 
-    st.session_state.pop(
-        "access_token",
-        None
-    )
+    st.session_state.pop("access_token", None)
 
-    st.error(
-        f"Kite Session Error: {e}"
-    )
-
+    st.error(f"Kite Session Error: {e}")
     st.stop()
 
 
-# =====================================================
-# TIME
-# =====================================================
-
 st.caption(
     "Last Update: "
-    + datetime.now().strftime(
-        "%d-%m-%Y %H:%M:%S"
-    )
+    + datetime.now().strftime("%d-%m-%Y %H:%M:%S")
 )
 
-
-# =====================================================
-# MANUAL REFRESH
-# =====================================================
 
 if st.button("🔄 Refresh"):
 
     st.rerun()
 
 
-# =====================================================
-# LIVE MARKET
-# =====================================================
+# =========================================================
+# LIVE INDEX DATA
+# =========================================================
 
 st.divider()
-
 st.subheader("📊 Live Market")
 
 
@@ -151,10 +130,7 @@ try:
 
 except Exception as e:
 
-    st.error(
-        f"Market Data Error: {e}"
-    )
-
+    st.error(f"Market Data Error: {e}")
     st.stop()
 
 
@@ -169,17 +145,11 @@ def get_ltp(symbol):
     )
 
 
-def get_percent_change(symbol):
+def get_change(symbol):
 
-    data = market.get(
-        symbol,
-        {}
-    )
+    data = market.get(symbol, {})
 
-    last = data.get(
-        "last_price",
-        0
-    )
+    last = data.get("last_price", 0)
 
     close = data.get(
         "ohlc",
@@ -191,10 +161,7 @@ def get_percent_change(symbol):
 
     if close:
 
-        return (
-            (last - close)
-            / close
-        ) * 100
+        return ((last - close) / close) * 100
 
     return 0
 
@@ -203,57 +170,489 @@ c1, c2, c3, c4, c5 = st.columns(5)
 
 
 with c1:
-
     st.metric(
         "NIFTY 50",
         f"{get_ltp('NSE:NIFTY 50'):,.2f}",
-        f"{get_percent_change('NSE:NIFTY 50'):+.2f}%"
+        f"{get_change('NSE:NIFTY 50'):+.2f}%"
     )
 
 
 with c2:
-
     st.metric(
         "BANK NIFTY",
         f"{get_ltp('NSE:NIFTY BANK'):,.2f}",
-        f"{get_percent_change('NSE:NIFTY BANK'):+.2f}%"
+        f"{get_change('NSE:NIFTY BANK'):+.2f}%"
     )
 
 
 with c3:
-
     st.metric(
         "SENSEX",
         f"{get_ltp('BSE:SENSEX'):,.2f}",
-        f"{get_percent_change('BSE:SENSEX'):+.2f}%"
+        f"{get_change('BSE:SENSEX'):+.2f}%"
     )
 
 
 with c4:
-
     st.metric(
         "NIFTY NEXT 50",
         f"{get_ltp('NSE:NIFTY NEXT 50'):,.2f}",
-        f"{get_percent_change('NSE:NIFTY NEXT 50'):+.2f}%"
+        f"{get_change('NSE:NIFTY NEXT 50'):+.2f}%"
     )
 
 
 with c5:
-
     st.metric(
         "INDIA VIX",
         f"{get_ltp('NSE:INDIA VIX'):,.2f}",
-        f"{get_percent_change('NSE:INDIA VIX'):+.2f}%"
+        f"{get_change('NSE:INDIA VIX'):+.2f}%"
     )
 
 
-# =====================================================
-# NIFTY OPTION CHAIN
-# =====================================================
+# =========================================================
+# HISTORICAL DATA FUNCTIONS
+# =========================================================
+
+def get_historical_data(
+    instrument_token,
+    interval="5minute",
+    days=5
+):
+
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days)
+
+    try:
+
+        data = kite.historical_data(
+            instrument_token,
+            from_date,
+            to_date,
+            interval
+        )
+
+        return pd.DataFrame(data)
+
+    except Exception as e:
+
+        return pd.DataFrame()
+
+
+def calculate_rsi(series, period=14):
+
+    delta = series.diff()
+
+    gain = delta.clip(lower=0)
+
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.ewm(
+        alpha=1 / period,
+        adjust=False
+    ).mean()
+
+    avg_loss = loss.ewm(
+        alpha=1 / period,
+        adjust=False
+    ).mean()
+
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
+    )
+
+    rsi = 100 - (
+        100 / (1 + rs)
+    )
+
+    return rsi
+
+
+def calculate_vwap(df):
+
+    if df.empty:
+        return pd.Series(dtype=float)
+
+    typical_price = (
+        df["high"]
+        + df["low"]
+        + df["close"]
+    ) / 3
+
+    volume = pd.to_numeric(
+        df["volume"],
+        errors="coerce"
+    ).fillna(0)
+
+    cumulative_pv = (
+        typical_price * volume
+    ).cumsum()
+
+    cumulative_volume = volume.cumsum()
+
+    vwap = (
+        cumulative_pv
+        / cumulative_volume.replace(
+            0,
+            np.nan
+        )
+    )
+
+    return vwap
+
+
+# =========================================================
+# FIND NIFTY INSTRUMENT TOKEN
+# =========================================================
+
+try:
+
+    nse_instruments = kite.instruments("NSE")
+
+    nse_df = pd.DataFrame(
+        nse_instruments
+    )
+
+except Exception as e:
+
+    nse_df = pd.DataFrame()
+
+    st.warning(
+        f"NSE instruments error: {e}"
+    )
+
+
+nifty_token = None
+
+
+if not nse_df.empty:
+
+    nifty_rows = nse_df[
+        (
+            nse_df["tradingsymbol"]
+            == "NIFTY 50"
+        )
+        &
+        (
+            nse_df["exchange"]
+            == "NSE"
+        )
+    ]
+
+    if not nifty_rows.empty:
+
+        nifty_token = int(
+            nifty_rows.iloc[0][
+                "instrument_token"
+            ]
+        )
+
+
+# =========================================================
+# TECHNICAL ANALYSIS
+# =========================================================
 
 st.divider()
 
-st.subheader("⛓️ NIFTY LIVE OPTION CHAIN")
+st.subheader(
+    "📈 NIFTY Technical Analysis"
+)
+
+
+technical_df = pd.DataFrame()
+
+
+if nifty_token is not None:
+
+    technical_df = get_historical_data(
+        nifty_token,
+        interval="5minute",
+        days=5
+    )
+
+
+if not technical_df.empty:
+
+    technical_df["date"] = pd.to_datetime(
+        technical_df["date"]
+    )
+
+    technical_df["close"] = pd.to_numeric(
+        technical_df["close"],
+        errors="coerce"
+    )
+
+    technical_df["volume"] = pd.to_numeric(
+        technical_df["volume"],
+        errors="coerce"
+    )
+
+    technical_df["RSI"] = calculate_rsi(
+        technical_df["close"],
+        14
+    )
+
+    technical_df["VWAP"] = calculate_vwap(
+        technical_df
+    )
+
+    latest = technical_df.iloc[-1]
+
+    current_price = float(
+        latest["close"]
+    )
+
+    current_rsi = latest["RSI"]
+
+    current_vwap = latest["VWAP"]
+
+    # -----------------------------------------------------
+    # VOLUME BREAKOUT
+    # -----------------------------------------------------
+
+    volume_average = (
+        technical_df["volume"]
+        .rolling(20)
+        .mean()
+    )
+
+    latest_volume = latest["volume"]
+
+    latest_average_volume = (
+        volume_average.iloc[-1]
+    )
+
+    volume_breakout = False
+    volume_breakdown = False
+
+    if pd.notna(latest_average_volume):
+
+        if latest_volume > (
+            latest_average_volume * 1.5
+        ):
+
+            if current_price > (
+                technical_df["close"]
+                .iloc[-2]
+            ):
+
+                volume_breakout = True
+
+            elif current_price < (
+                technical_df["close"]
+                .iloc[-2]
+            ):
+
+                volume_breakdown = True
+
+
+    # -----------------------------------------------------
+    # SENTIMENT
+    # -----------------------------------------------------
+
+    bullish_points = 0
+    bearish_points = 0
+
+
+    # RSI
+    if pd.notna(current_rsi):
+
+        if current_rsi > 60:
+
+            bullish_points += 1
+
+        elif current_rsi < 40:
+
+            bearish_points += 1
+
+
+    # VWAP
+    if pd.notna(current_vwap):
+
+        if current_price > current_vwap:
+
+            bullish_points += 1
+
+        elif current_price < current_vwap:
+
+            bearish_points += 1
+
+
+    # Volume
+    if volume_breakout:
+
+        bullish_points += 1
+
+    if volume_breakdown:
+
+        bearish_points += 1
+
+
+    if bullish_points >= 2:
+
+        sentiment = "🟢 BULLISH"
+
+    elif bearish_points >= 2:
+
+        sentiment = "🔴 BEARISH"
+
+    else:
+
+        sentiment = "🟡 NEUTRAL"
+
+
+    # -----------------------------------------------------
+    # DISPLAY
+    # -----------------------------------------------------
+
+    t1, t2, t3, t4, t5 = st.columns(5)
+
+
+    with t1:
+
+        st.metric(
+            "Price",
+            f"{current_price:,.2f}"
+        )
+
+
+    with t2:
+
+        if pd.notna(current_rsi):
+
+            st.metric(
+                "RSI (14)",
+                f"{current_rsi:.2f}"
+            )
+
+        else:
+
+            st.metric(
+                "RSI (14)",
+                "—"
+            )
+
+
+    with t3:
+
+        if pd.notna(current_vwap):
+
+            st.metric(
+                "VWAP",
+                f"{current_vwap:,.2f}"
+            )
+
+        else:
+
+            st.metric(
+                "VWAP",
+                "—"
+            )
+
+
+    with t4:
+
+        if volume_breakout:
+
+            st.metric(
+                "Volume",
+                "BREAKOUT"
+            )
+
+        elif volume_breakdown:
+
+            st.metric(
+                "Volume",
+                "BREAKDOWN"
+            )
+
+        else:
+
+            st.metric(
+                "Volume",
+                "Normal"
+            )
+
+
+    with t5:
+
+        st.metric(
+            "Sentiment",
+            sentiment
+        )
+
+
+    # -----------------------------------------------------
+    # STRATEGY STATUS
+    # -----------------------------------------------------
+
+    st.divider()
+
+    st.subheader(
+        "🎯 Market Setup"
+    )
+
+
+    buy_condition = (
+        pd.notna(current_rsi)
+        and pd.notna(current_vwap)
+        and current_rsi > 60
+        and current_price > current_vwap
+        and volume_breakout
+    )
+
+
+    sell_condition = (
+        pd.notna(current_rsi)
+        and pd.notna(current_vwap)
+        and current_rsi < 40
+        and current_price < current_vwap
+        and volume_breakdown
+    )
+
+
+    if buy_condition:
+
+        st.success(
+            "🟢 BUY SETUP — RSI > 60 + Price > VWAP + Volume Breakout"
+        )
+
+    elif sell_condition:
+
+        st.error(
+            "🔴 SELL SETUP — RSI < 40 + Price < VWAP + Volume Breakdown"
+        )
+
+    else:
+
+        st.info(
+            "⚪ NO TRADE SETUP — सभी conditions पूरी नहीं हैं"
+        )
+
+
+    st.caption(
+        "यह केवल market-data analysis है; कोई automatic order execute नहीं होता।"
+    )
+
+
+else:
+
+    st.warning(
+        "⚠️ Historical candle data उपलब्ध नहीं है। "
+        "RSI/VWAP/Volume analysis के लिए Kite historical-data access आवश्यक है। "
+        "Fake value नहीं दिखाई जा रही है।"
+    )
+
+
+# =========================================================
+# OPTION CHAIN
+# =========================================================
+
+st.divider()
+
+st.subheader(
+    "⛓️ NIFTY LIVE OPTION CHAIN"
+)
 
 
 nifty_price = get_ltp(
@@ -261,15 +660,17 @@ nifty_price = get_ltp(
 )
 
 
-# =====================================================
-# NFO INSTRUMENTS
-# =====================================================
+# =========================================================
+# NFO
+# =========================================================
 
 try:
 
     instruments = kite.instruments("NFO")
 
-    df = pd.DataFrame(instruments)
+    df = pd.DataFrame(
+        instruments
+    )
 
 except Exception as e:
 
@@ -289,10 +690,6 @@ if df.empty:
     st.stop()
 
 
-# =====================================================
-# CLEAN DATA
-# =====================================================
-
 df["expiry"] = pd.to_datetime(
     df["expiry"],
     errors="coerce"
@@ -308,17 +705,14 @@ df["strike"] = pd.to_numeric(
 today = datetime.now().date()
 
 
-# =====================================================
-# FILTER NIFTY OPTIONS
-# =====================================================
-
 options = df[
-    (df["name"] == "NIFTY") &
+    (df["name"] == "NIFTY")
+    &
     (
-        df["instrument_type"].isin(
-            ["CE", "PE"]
-        )
-    ) &
+        df["instrument_type"]
+        .isin(["CE", "PE"])
+    )
+    &
     (
         df["expiry"] >= today
     )
@@ -333,10 +727,6 @@ if options.empty:
 
     st.stop()
 
-
-# =====================================================
-# NEAREST EXPIRY
-# =====================================================
 
 expiry = sorted(
     options["expiry"]
@@ -355,38 +745,33 @@ st.info(
 )
 
 
-# =====================================================
-# ATM
-# =====================================================
-
 atm = round(
     nifty_price / 50
 ) * 50
 
 
 st.write(
-    f"**NIFTY:** {nifty_price:,.2f}   |   "
+    f"**NIFTY:** {nifty_price:,.2f} | "
     f"**ATM:** {atm:,.0f}"
 )
 
 
-# =====================================================
-# ATM ±10 STRIKES
-# =====================================================
-
 options = options[
-    (options["strike"] >= atm - 500) &
+    (options["strike"] >= atm - 500)
+    &
     (options["strike"] <= atm + 500)
 ].copy()
 
 
-# =====================================================
+# =========================================================
 # QUOTES
-# =====================================================
+# =========================================================
 
 quote_keys = [
     "NFO:" + symbol
-    for symbol in options["tradingsymbol"]
+    for symbol in options[
+        "tradingsymbol"
+    ]
 ]
 
 
@@ -405,9 +790,13 @@ for start in range(
 
     try:
 
-        result = kite.quote(batch)
+        result = kite.quote(
+            batch
+        )
 
-        quotes.update(result)
+        quotes.update(
+            result
+        )
 
     except Exception as e:
 
@@ -416,34 +805,33 @@ for start in range(
         )
 
 
-# =====================================================
-# BUILD OPTION TABLE
-# =====================================================
+# =========================================================
+# BUILD OPTION DATA
+# =========================================================
 
 rows = []
 
 
 for _, row in options.iterrows():
 
-    symbol = row["tradingsymbol"]
+    symbol = row[
+        "tradingsymbol"
+    ]
 
     quote = quotes.get(
         "NFO:" + symbol,
         {}
     )
 
-
     depth = quote.get(
         "depth",
         {}
     )
 
-
     buy = depth.get(
         "buy",
         []
     )
-
 
     sell = depth.get(
         "sell",
@@ -471,9 +859,13 @@ for _, row in options.iterrows():
 
     rows.append({
 
-        "Strike": row["strike"],
+        "Strike": row[
+            "strike"
+        ],
 
-        "Type": row["instrument_type"],
+        "Type": row[
+            "instrument_type"
+        ],
 
         "Symbol": symbol,
 
@@ -492,7 +884,6 @@ for _, row in options.iterrows():
         "Bid": bid,
 
         "Ask": ask
-
     })
 
 
@@ -510,9 +901,9 @@ if option_data.empty:
     st.stop()
 
 
-# =====================================================
-# NUMERIC COLUMNS
-# =====================================================
+# =========================================================
+# NUMERIC
+# =========================================================
 
 for column in [
     "Strike",
@@ -529,20 +920,19 @@ for column in [
     )
 
 
-# =====================================================
-# SORT
-# =====================================================
-
 option_data = option_data.sort_values(
-    ["Strike", "Type"]
+    [
+        "Strike",
+        "Type"
+    ]
 ).reset_index(
     drop=True
 )
 
 
-# =====================================================
-# OI SNAPSHOT STORAGE
-# =====================================================
+# =========================================================
+# OI SNAPSHOT
+# =========================================================
 
 if "previous_option_snapshot" not in st.session_state:
 
@@ -555,10 +945,6 @@ previous_snapshot = st.session_state[
     "previous_option_snapshot"
 ]
 
-
-# =====================================================
-# CALCULATE OI CHANGE + PRICE CHANGE
-# =====================================================
 
 oi_changes = []
 oi_change_percentages = []
@@ -573,7 +959,6 @@ for _, row in option_data.iterrows():
     current_oi = row["OI"]
 
     current_ltp = row["LTP"]
-
 
     previous = previous_snapshot.get(
         symbol
@@ -599,10 +984,6 @@ for _, row in option_data.iterrows():
         )
 
 
-        # -----------------------------
-        # OI CHANGE
-        # -----------------------------
-
         if (
             pd.notna(current_oi)
             and pd.notna(previous_oi)
@@ -612,7 +993,6 @@ for _, row in option_data.iterrows():
                 current_oi
                 - previous_oi
             )
-
 
             if previous_oi != 0:
 
@@ -631,10 +1011,6 @@ for _, row in option_data.iterrows():
             oi_change_percent = None
 
 
-        # -----------------------------
-        # PRICE CHANGE
-        # -----------------------------
-
         if (
             pd.notna(current_ltp)
             and pd.notna(previous_ltp)
@@ -649,10 +1025,6 @@ for _, row in option_data.iterrows():
 
             price_change = None
 
-
-        # -----------------------------
-        # BUILDUP
-        # -----------------------------
 
         if (
             oi_change is None
@@ -711,47 +1083,39 @@ for _, row in option_data.iterrows():
     )
 
 
-# =====================================================
-# ADD COLUMNS
-# =====================================================
-
 option_data["OI Change"] = (
     oi_changes
 )
-
 
 option_data["OI Change %"] = (
     oi_change_percentages
 )
 
-
 option_data["Price Change"] = (
     price_changes
 )
-
 
 option_data["Buildup"] = (
     buildups
 )
 
 
-# =====================================================
-# SAVE CURRENT SNAPSHOT
-# =====================================================
+# =========================================================
+# SAVE SNAPSHOT
+# =========================================================
 
 new_snapshot = {}
 
 
 for _, row in option_data.iterrows():
 
-    symbol = row["Symbol"]
-
-    new_snapshot[symbol] = {
+    new_snapshot[
+        row["Symbol"]
+    ] = {
 
         "OI": row["OI"],
 
         "LTP": row["LTP"]
-
     }
 
 
@@ -760,9 +1124,9 @@ st.session_state[
 ] = new_snapshot
 
 
-# =====================================================
+# =========================================================
 # PCR
-# =====================================================
+# =========================================================
 
 ce_oi = option_data[
     option_data["Type"] == "CE"
@@ -774,22 +1138,29 @@ pe_oi = option_data[
 ]["OI"].fillna(0).sum()
 
 
-if ce_oi > 0:
-
-    pcr = pe_oi / ce_oi
-
-else:
-
-    pcr = None
+pcr = (
+    pe_oi / ce_oi
+    if ce_oi > 0
+    else None
+)
 
 
-# =====================================================
-# SUPPORT
-# =====================================================
+# =========================================================
+# SUPPORT / RESISTANCE
+# =========================================================
 
 puts = option_data[
     option_data["Type"] == "PE"
 ].copy()
+
+
+calls = option_data[
+    option_data["Type"] == "CE"
+].copy()
+
+
+support = None
+resistance = None
 
 
 if not puts.empty:
@@ -799,19 +1170,6 @@ if not puts.empty:
         "Strike"
     ]
 
-else:
-
-    support = None
-
-
-# =====================================================
-# RESISTANCE
-# =====================================================
-
-calls = option_data[
-    option_data["Type"] == "CE"
-].copy()
-
 
 if not calls.empty:
 
@@ -820,14 +1178,10 @@ if not calls.empty:
         "Strike"
     ]
 
-else:
 
-    resistance = None
-
-
-# =====================================================
+# =========================================================
 # MAX PAIN
-# =====================================================
+# =========================================================
 
 max_pain = None
 
@@ -878,9 +1232,9 @@ if strikes:
         )
 
 
-# =====================================================
-# SUMMARY
-# =====================================================
+# =========================================================
+# OPTION SUMMARY
+# =========================================================
 
 st.divider()
 
@@ -940,9 +1294,9 @@ with s5:
     )
 
 
-# =====================================================
-# OI CHANGE SUMMARY
-# =====================================================
+# =========================================================
+# OI SUMMARY
+# =========================================================
 
 st.divider()
 
@@ -970,54 +1324,43 @@ b1, b2, b3 = st.columns(3)
 
 with b1:
 
-    if pd.notna(total_ce_oi_change):
-
-        st.metric(
-            "Total CE OI Change",
+    st.metric(
+        "Total CE OI Change",
+        (
             f"{total_ce_oi_change:,.0f}"
+            if pd.notna(
+                total_ce_oi_change
+            )
+            else "—"
         )
-
-    else:
-
-        st.metric(
-            "Total CE OI Change",
-            "—"
-        )
+    )
 
 
 with b2:
 
-    if pd.notna(total_pe_oi_change):
-
-        st.metric(
-            "Total PE OI Change",
+    st.metric(
+        "Total PE OI Change",
+        (
             f"{total_pe_oi_change:,.0f}"
+            if pd.notna(
+                total_pe_oi_change
+            )
+            else "—"
         )
-
-    else:
-
-        st.metric(
-            "Total PE OI Change",
-            "—"
-        )
+    )
 
 
 with b3:
 
     st.metric(
-        "Snapshot",
-        "Live"
+        "Data",
+        "LIVE"
     )
 
 
-st.caption(
-    "OI Change पहली snapshot पर — रहेगा। अगली refresh पर बदलाव calculate होगा।"
-)
-
-
-# =====================================================
-# CE TABLE
-# =====================================================
+# =========================================================
+# CE
+# =========================================================
 
 st.divider()
 
@@ -1031,33 +1374,30 @@ ce_display = option_data[
 ].copy()
 
 
-ce_display = ce_display[
-    [
-        "Strike",
-        "Symbol",
-        "LTP",
-        "OI",
-        "OI Change",
-        "OI Change %",
-        "Price Change",
-        "Volume",
-        "Bid",
-        "Ask",
-        "Buildup"
-    ]
-]
-
-
 st.dataframe(
-    ce_display,
+    ce_display[
+        [
+            "Strike",
+            "Symbol",
+            "LTP",
+            "OI",
+            "OI Change",
+            "OI Change %",
+            "Price Change",
+            "Volume",
+            "Bid",
+            "Ask",
+            "Buildup"
+        ]
+    ],
     use_container_width=True,
     hide_index=True
 )
 
 
-# =====================================================
-# PE TABLE
-# =====================================================
+# =========================================================
+# PE
+# =========================================================
 
 st.subheader(
     "🔴 PUT OPTIONS — PE"
@@ -1069,33 +1409,30 @@ pe_display = option_data[
 ].copy()
 
 
-pe_display = pe_display[
-    [
-        "Strike",
-        "Symbol",
-        "LTP",
-        "OI",
-        "OI Change",
-        "OI Change %",
-        "Price Change",
-        "Volume",
-        "Bid",
-        "Ask",
-        "Buildup"
-    ]
-]
-
-
 st.dataframe(
-    pe_display,
+    pe_display[
+        [
+            "Strike",
+            "Symbol",
+            "LTP",
+            "OI",
+            "OI Change",
+            "OI Change %",
+            "Price Change",
+            "Volume",
+            "Bid",
+            "Ask",
+            "Buildup"
+        ]
+    ],
     use_container_width=True,
     hide_index=True
 )
 
 
-# =====================================================
+# =========================================================
 # AUTO REFRESH
-# =====================================================
+# =========================================================
 
 st.divider()
 
@@ -1112,9 +1449,9 @@ if auto_refresh:
     )
 
 
-# =====================================================
+# =========================================================
 # FOOTER
-# =====================================================
+# =========================================================
 
 st.divider()
 
@@ -1127,9 +1464,9 @@ st.caption(
 )
 
 st.caption(
-    "OI Change = current snapshot OI − previous successful snapshot OI"
+    "RSI/VWAP are calculated from Kite candle data."
 )
 
 st.caption(
-    "Buildup classification is based on price change + OI change and is for analysis only."
-)
+    "यह dashboard केवल market-data analysis के लिए है।"
+).

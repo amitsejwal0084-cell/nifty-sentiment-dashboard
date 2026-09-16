@@ -1,12 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 from kiteconnect import KiteConnect
 
-
-# =========================================================
-# KITE CLIENT
-# =========================================================
 
 def get_kite_client():
 
@@ -14,14 +9,10 @@ def get_kite_client():
     access_token = st.session_state.get("access_token")
 
     if not api_key:
-        raise Exception(
-            "KITE_API_KEY Streamlit Secrets में नहीं मिला।"
-        )
+        raise Exception("KITE_API_KEY नहीं मिला।")
 
     if not access_token:
-        raise Exception(
-            "Kite access token नहीं मिला। पहले Kite Login करें।"
-        )
+        raise Exception("Kite access token नहीं मिला।")
 
     kite = KiteConnect(
         api_key=api_key
@@ -34,34 +25,19 @@ def get_kite_client():
     return kite
 
 
-# =========================================================
-# NFO INSTRUMENTS
-# =========================================================
-
-@st.cache_data(ttl=3600)
-def load_nfo_instruments(
-    api_key,
-    access_token
+def get_live_option_chain(
+    spot_price,
+    strikes_each_side=10
 ):
 
-    kite = KiteConnect(
-        api_key=api_key
-    )
+    kite = get_kite_client()
 
-    kite.set_access_token(
-        access_token
-    )
+    instruments = kite.instruments("NFO")
 
-    instruments = kite.instruments(
-        "NFO"
-    )
-
-    df = pd.DataFrame(
-        instruments
-    )
+    df = pd.DataFrame(instruments)
 
     if df.empty:
-        return df
+        return pd.DataFrame()
 
     df["expiry"] = pd.to_datetime(
         df["expiry"],
@@ -73,358 +49,110 @@ def load_nfo_instruments(
         errors="coerce"
     )
 
-    return df
-
-
-# =========================================================
-# NIFTY EXPIRY
-# =========================================================
-
-def get_nearest_nifty_expiry():
-
-    api_key = st.secrets.get(
-        "KITE_API_KEY"
-    )
-
-    access_token = st.session_state.get(
-        "access_token"
-    )
-
-    df = load_nfo_instruments(
-        api_key,
-        access_token
-    )
-
-    if df.empty:
-        return None
-
-    today = date.today()
-
-    nifty = df[
-        (df["name"] == "NIFTY") &
-        (
-            df["instrument_type"]
-            .isin(["CE", "PE"])
-        ) &
-        (df["expiry"] >= today)
-    ].copy()
-
-    if nifty.empty:
-        return None
-
-    return sorted(
-        nifty["expiry"].dropna().unique()
-    )[0]
-
-
-# =========================================================
-# NIFTY OPTIONS
-# =========================================================
-
-def get_nifty_option_contracts():
-
-    api_key = st.secrets.get(
-        "KITE_API_KEY"
-    )
-
-    access_token = st.session_state.get(
-        "access_token"
-    )
-
-    df = load_nfo_instruments(
-        api_key,
-        access_token
-    )
-
-    if df.empty:
-        return pd.DataFrame()
-
-    expiry = get_nearest_nifty_expiry()
-
-    if expiry is None:
-        return pd.DataFrame()
+    today = pd.Timestamp.now().date()
 
     options = df[
         (df["name"] == "NIFTY") &
-        (df["expiry"] == expiry) &
-        (
-            df["instrument_type"]
-            .isin(["CE", "PE"])
-        )
+        (df["instrument_type"].isin(["CE", "PE"])) &
+        (df["expiry"] >= today)
     ].copy()
 
-    return options
-
-
-# =========================================================
-# ATM OPTION CONTRACTS
-# =========================================================
-
-def get_atm_option_contracts(
-    spot_price,
-    strikes_each_side=10
-):
-
-    contracts = get_nifty_option_contracts()
-
-    if (
-        contracts.empty
-        or spot_price is None
-    ):
+    if options.empty:
         return pd.DataFrame()
 
-    strike_interval = 50
+    expiry = sorted(
+        options["expiry"].dropna().unique()
+    )[0]
+
+    options = options[
+        options["expiry"] == expiry
+    ].copy()
 
     atm = round(
-        float(spot_price)
-        / strike_interval
-    ) * strike_interval
+        float(spot_price) / 50
+    ) * 50
 
-    low = (
-        atm -
-        strikes_each_side
-        * strike_interval
+    low = atm - (
+        strikes_each_side * 50
     )
 
-    high = (
-        atm +
-        strikes_each_side
-        * strike_interval
+    high = atm + (
+        strikes_each_side * 50
     )
 
-    result = contracts[
-        (contracts["strike"] >= low) &
-        (contracts["strike"] <= high)
+    options = options[
+        (options["strike"] >= low) &
+        (options["strike"] <= high)
     ].copy()
 
-    result = result.sort_values(
-        [
-            "strike",
-            "instrument_type"
-        ]
-    )
-
-    return result
-
-
-# =========================================================
-# LIVE OPTION CHAIN
-# =========================================================
-
-def get_live_option_chain(
-    spot_price,
-    strikes_each_side=10
-):
-
-    kite = get_kite_client()
-
-    contracts = get_atm_option_contracts(
-        spot_price,
-        strikes_each_side
-    )
-
-    if contracts.empty:
-        return pd.DataFrame()
-
-    instrument_keys = [
-        f"NFO:{symbol}"
-        for symbol in contracts[
-            "tradingsymbol"
-        ]
+    symbols = [
+        "NFO:" + symbol
+        for symbol in options["tradingsymbol"]
     ]
 
     quotes = {}
 
-    batch_size = 100
-
-    for i in range(
+    for start in range(
         0,
-        len(instrument_keys),
-        batch_size
+        len(symbols),
+        100
     ):
 
-        batch = instrument_keys[
-            i:i + batch_size
+        batch = symbols[
+            start:start + 100
         ]
 
-        response = kite.quote(
-            batch
-        )
+        response = kite.quote(batch)
 
         if response:
-            quotes.update(
-                response
-            )
+            quotes.update(response)
 
     rows = []
 
-    for _, contract in contracts.iterrows():
+    for _, row in options.iterrows():
 
-        symbol = contract[
-            "tradingsymbol"
-        ]
+        symbol = row["tradingsymbol"]
 
-        key = f"NFO:{symbol}"
-
-        quote = quotes.get(
-            key,
+        q = quotes.get(
+            "NFO:" + symbol,
             {}
         )
 
-        depth = quote.get(
-            "depth",
-            {}
+        rows.append(
+            {
+                "strike": row["strike"],
+                "type": row["instrument_type"],
+                "symbol": symbol,
+                "ltp": q.get("last_price"),
+                "oi": q.get("oi"),
+                "volume": q.get("volume"),
+            }
         )
 
-        buy_depth = depth.get(
-            "buy",
-            []
-        )
-
-        sell_depth = depth.get(
-            "sell",
-            []
-        )
-
-        bid = (
-            buy_depth[0]["price"]
-            if buy_depth
-            else None
-        )
-
-        ask = (
-            sell_depth[0]["price"]
-            if sell_depth
-            else None
-        )
-
-        rows.append({
-
-            "strike": contract[
-                "strike"
-            ],
-
-            "type": contract[
-                "instrument_type"
-            ],
-
-            "symbol": symbol,
-
-            "token": contract[
-                "instrument_token"
-            ],
-
-            "ltp": quote.get(
-                "last_price"
-            ),
-
-            "volume": quote.get(
-                "volume"
-            ),
-
-            "oi": quote.get(
-                "oi"
-            ),
-
-            "oi_day_high": quote.get(
-                "oi_day_high"
-            ),
-
-            "oi_day_low": quote.get(
-                "oi_day_low"
-            ),
-
-            "bid": bid,
-
-            "ask": ask,
-
-            "last_quantity": quote.get(
-                "last_quantity"
-            ),
-
-            "average_price": quote.get(
-                "average_price"
-            )
-
-        })
-
-    result = pd.DataFrame(
-        rows
-    )
-
-    if result.empty:
-        return result
-
-    numeric_columns = [
-
-        "strike",
-        "ltp",
-        "volume",
-        "oi",
-        "oi_day_high",
-        "oi_day_low",
-        "bid",
-        "ask",
-        "last_quantity",
-        "average_price"
-
-    ]
-
-    for column in numeric_columns:
-
-        result[column] = pd.to_numeric(
-            result[column],
-            errors="coerce"
-        )
-
-    return result
+    return pd.DataFrame(rows)
 
 
-# =========================================================
-# PCR
-# =========================================================
-
-def calculate_pcr(
-    option_data
-):
+def calculate_pcr(option_data):
 
     if option_data.empty:
         return None
 
-    calls = option_data[
+    ce_oi = option_data[
         option_data["type"] == "CE"
-    ]
+    ]["oi"].fillna(0).sum()
 
-    puts = option_data[
+    pe_oi = option_data[
         option_data["type"] == "PE"
-    ]
+    ]["oi"].fillna(0).sum()
 
-    call_oi = (
-        calls["oi"]
-        .fillna(0)
-        .sum()
-    )
-
-    put_oi = (
-        puts["oi"]
-        .fillna(0)
-        .sum()
-    )
-
-    if call_oi <= 0:
+    if ce_oi == 0:
         return None
 
     return round(
-        float(
-            put_oi / call_oi
-        ),
+        pe_oi / ce_oi,
         2
     )
 
-
-# =========================================================
-# SUPPORT / RESISTANCE
-# =========================================================
 
 def calculate_support_resistance(
     option_data
@@ -435,47 +163,97 @@ def calculate_support_resistance(
 
     calls = option_data[
         option_data["type"] == "CE"
-    ].copy()
+    ]
 
     puts = option_data[
         option_data["type"] == "PE"
-    ].copy()
+    ]
 
     resistance = None
     support = None
 
     if not calls.empty:
 
-        calls = calls.dropna(
+        valid = calls.dropna(
             subset=["oi"]
         )
 
-        if not calls.empty:
+        if not valid.empty:
 
-            resistance = calls.loc[
-                calls["oi"].idxmax(),
+            resistance = valid.loc[
+                valid["oi"].idxmax(),
                 "strike"
             ]
 
     if not puts.empty:
 
-        puts = puts.dropna(
+        valid = puts.dropna(
             subset=["oi"]
         )
 
-        if not puts.empty:
+        if not valid.empty:
 
-            support = puts.loc[
-                puts["oi"].idxmax(),
+            support = valid.loc[
+                valid["oi"].idxmax(),
                 "strike"
             ]
 
     return support, resistance
 
 
-# =========================================================
-# OI CHANGE FROM PREVIOUS SNAPSHOT
-# =========================================================
+def calculate_max_pain(
+    option_data
+):
+
+    if option_data.empty:
+        return None
+
+    strikes = sorted(
+        option_data["strike"]
+        .dropna()
+        .unique()
+    )
+
+    if not strikes:
+        return None
+
+    calls = option_data[
+        option_data["type"] == "CE"
+    ]
+
+    puts = option_data[
+        option_data["type"] == "PE"
+    ]
+
+    pain = {}
+
+    for test_strike in strikes:
+
+        call_pain = (
+            (
+                test_strike -
+                calls["strike"]
+            ).clip(lower=0)
+            * calls["oi"].fillna(0)
+        ).sum()
+
+        put_pain = (
+            (
+                puts["strike"] -
+                test_strike
+            ).clip(lower=0)
+            * puts["oi"].fillna(0)
+        ).sum()
+
+        pain[test_strike] = (
+            call_pain + put_pain
+        )
+
+    return min(
+        pain,
+        key=pain.get
+    )
+
 
 def calculate_snapshot_oi_change(
     current_data
@@ -485,44 +263,33 @@ def calculate_snapshot_oi_change(
         return current_data
 
     previous = st.session_state.get(
-        "previous_option_oi"
+        "previous_option_oi",
+        {}
     )
 
-    current = current_data.copy()
+    data = current_data.copy()
 
-    if previous is None:
-
-        current["oi_change"] = 0
-
-    else:
-
-        current["oi_change"] = (
-            current.apply(
-                lambda row:
-                row["oi"]
-                - previous.get(
-                    row["symbol"],
-                    row["oi"]
-                ),
-                axis=1
-            )
-        )
+    data["oi_change"] = data.apply(
+        lambda row:
+        row["oi"] -
+        previous.get(
+            row["symbol"],
+            row["oi"]
+        ),
+        axis=1
+    )
 
     st.session_state[
         "previous_option_oi"
     ] = dict(
         zip(
-            current["symbol"],
-            current["oi"].fillna(0)
+            data["symbol"],
+            data["oi"].fillna(0)
         )
     )
 
-    return current
+    return data
 
-
-# =========================================================
-# CALL / PUT OI BUILDUP
-# =========================================================
 
 def calculate_buildup(
     option_data
@@ -533,145 +300,20 @@ def calculate_buildup(
 
     data = option_data.copy()
 
-    def buildup(row):
+    data["buildup"] = "NEUTRAL"
 
-        oi_change = row.get(
-            "oi_change",
-            0
-        )
+    data.loc[
+        data["oi_change"] > 0,
+        "buildup"
+    ] = "OI BUILDUP"
 
-        ltp = row.get(
-            "ltp",
-            0
-        )
-
-        average_price = row.get(
-            "average_price",
-            0
-        )
-
-        if pd.isna(oi_change):
-            return "NO DATA"
-
-        if pd.isna(ltp):
-            return "NO DATA"
-
-        if pd.isna(average_price):
-            average_price = ltp
-
-        price_up = (
-            ltp > average_price
-        )
-
-        price_down = (
-            ltp < average_price
-        )
-
-        if (
-            oi_change > 0
-            and price_up
-        ):
-            return "LONG BUILDUP"
-
-        if (
-            oi_change > 0
-            and price_down
-        ):
-            return "SHORT BUILDUP"
-
-        if (
-            oi_change < 0
-            and price_up
-        ):
-            return "SHORT COVERING"
-
-        if (
-            oi_change < 0
-            and price_down
-        ):
-            return "LONG UNWINDING"
-
-        return "NEUTRAL"
-
-    data["buildup"] = data.apply(
-        buildup,
-        axis=1
-    )
+    data.loc[
+        data["oi_change"] < 0,
+        "buildup"
+    ] = "OI UNWINDING"
 
     return data
 
-
-# =========================================================
-# MAX PAIN
-# =========================================================
-
-def calculate_max_pain(
-    option_data
-):
-
-    if option_data.empty:
-        return None
-
-    data = option_data.copy()
-
-    data["oi"] = pd.to_numeric(
-        data["oi"],
-        errors="coerce"
-    ).fillna(0)
-
-    strikes = sorted(
-        data["strike"]
-        .dropna()
-        .unique()
-    )
-
-    if not strikes:
-        return None
-
-    calls = data[
-        data["type"] == "CE"
-    ]
-
-    puts = data[
-        data["type"] == "PE"
-    ]
-
-    pain_values = {}
-
-    for test_strike in strikes:
-
-        call_pain = (
-            (
-                test_strike
-                - calls["strike"]
-            ).clip(lower=0)
-            * calls["oi"]
-        ).sum()
-
-        put_pain = (
-            (
-                puts["strike"]
-                - test_strike
-            ).clip(lower=0)
-            * puts["oi"]
-        ).sum()
-
-        pain_values[
-            test_strike
-        ] = call_pain + put_pain
-
-    if not pain_values:
-        return None
-
-    return min(
-        pain_values,
-        key=pain_values.get
-    )
-
-
-# =========================================================
-# OPTION SENTIMENT
-# =========================================================
 
 def option_sentiment(
     option_data

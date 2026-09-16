@@ -733,7 +733,7 @@ st.caption(
 
 st.caption(
     "Data Source: Zerodha Kite Connect"
-)=============
+)
 
 if not option_chain.empty:
 

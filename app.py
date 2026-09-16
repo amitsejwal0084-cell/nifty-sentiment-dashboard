@@ -1469,4 +1469,4 @@ st.caption(
 
 st.caption(
     "यह dashboard केवल market-data analysis के लिए है।"
-).
+)

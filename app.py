@@ -1,475 +1,178 @@
 import streamlit as st
-import yfinance as yf
-import pandas as pd
-
+from kiteconnect import KiteConnect
 
 st.set_page_config(
-    page_title="NIFTY Sentiment AI",
-    page_icon="🧠",
+    page_title="NIFTY Professional Trading Dashboard",
+    page_icon="📈",
     layout="wide"
 )
 
+st.title("📈 NIFTY PROFESSIONAL TRADING DASHBOARD")
 
-st.title("🧠 NIFTY SENTIMENT AI")
-st.subheader("Live Market Sentiment Dashboard")
+# -------------------------------------------------
+# KITE CREDENTIALS
+# -------------------------------------------------
 
+API_KEY = st.secrets.get("KITE_API_KEY")
+API_SECRET = st.secrets.get("KITE_API_SECRET")
 
-# -----------------------------
-# NIFTY DATA
-# -----------------------------
+if not API_KEY or not API_SECRET:
+    st.error("Kite API credentials Streamlit Secrets में नहीं मिले.")
+    st.stop()
 
-@st.cache_data(ttl=60)
-def get_nifty_data():
+kite = KiteConnect(api_key=API_KEY)
 
-    data = yf.download(
-        "^NSEI",
-        period="5d",
-        interval="5m",
-        progress=False,
-        auto_adjust=False
-    )
+# -------------------------------------------------
+# LOGIN
+# -------------------------------------------------
 
-    if data.empty:
-        return pd.DataFrame()
+st.subheader("🔐 Kite Connection")
 
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
+login_url = kite.login_url()
 
-    data = data.dropna()
+st.link_button(
+    "🔑 Login with Kite",
+    login_url
+)
 
-    return data
+st.info(
+    "Login करने के बाद Kite आपको आपके Redirect URL पर वापस भेजेगा."
+)
 
+# -------------------------------------------------
+# REQUEST TOKEN
+# -------------------------------------------------
 
-# -----------------------------
-# RSI
-# -----------------------------
+query_params = st.query_params
 
-def calculate_rsi(series, period=14):
+request_token = query_params.get("request_token")
 
-    delta = series.diff()
+if request_token:
 
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+    try:
 
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
+        session_data = kite.generate_session(
+            request_token,
+            api_secret=API_SECRET
+        )
 
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
+        access_token = session_data["access_token"]
 
-    rsi = 100 - (100 / (1 + rs))
+        st.session_state["access_token"] = access_token
 
-    return rsi
+        kite.set_access_token(access_token)
 
+        st.success("✅ Kite authentication successful!")
 
-# -----------------------------
-# ANALYSIS
-# -----------------------------
+    except Exception as e:
 
-data = get_nifty_data()
+        st.error(
+            f"❌ Kite authentication failed: {e}"
+        )
 
+# -------------------------------------------------
+# CHECK ACCESS TOKEN
+# -------------------------------------------------
 
-if data.empty:
+access_token = st.session_state.get(
+    "access_token"
+)
 
-    st.error(
-        "❌ NIFTY market data अभी उपलब्ध नहीं है। "
-        "थोड़ी देर बाद Refresh करें।"
+if not access_token:
+
+    st.warning(
+        "पहले ऊपर दिए गए 'Login with Kite' button से Kite login करें."
     )
 
     st.stop()
 
+kite.set_access_token(access_token)
 
-close = pd.to_numeric(
-    data["Close"],
-    errors="coerce"
-)
+# -------------------------------------------------
+# PROFILE TEST
+# -------------------------------------------------
 
-high = pd.to_numeric(
-    data["High"],
-    errors="coerce"
-)
+try:
 
-low = pd.to_numeric(
-    data["Low"],
-    errors="coerce"
-)
-
-volume = pd.to_numeric(
-    data["Volume"],
-    errors="coerce"
-)
-
-
-data["RSI"] = calculate_rsi(close)
-
-
-# -----------------------------
-# VWAP
-# -----------------------------
-
-typical_price = (
-    high + low + close
-) / 3
-
-cumulative_volume = volume.cumsum()
-
-data["VWAP"] = (
-    (typical_price * volume).cumsum()
-    / cumulative_volume.replace(0, pd.NA)
-)
-
-
-# -----------------------------
-# CURRENT VALUES
-# -----------------------------
-
-latest_price = float(close.iloc[-1])
-
-previous_price = float(close.iloc[-2])
-
-change = latest_price - previous_price
-
-change_pct = (
-    change / previous_price
-) * 100
-
-
-latest_rsi = data["RSI"].iloc[-1]
-
-latest_vwap = data["VWAP"].iloc[-1]
-
-
-if pd.isna(latest_rsi):
-    latest_rsi = 50
-
-
-if pd.isna(latest_vwap):
-    latest_vwap = latest_price
-
-
-# -----------------------------
-# VOLUME ANALYSIS
-# -----------------------------
-
-avg_volume = volume.tail(20).mean()
-
-latest_volume = volume.iloc[-1]
-
-
-if latest_volume > avg_volume * 1.5:
-
-    volume_status = "HIGH VOLUME"
-    volume_score = 10
-
-elif latest_volume > avg_volume:
-
-    volume_status = "ABOVE AVERAGE"
-    volume_score = 5
-
-else:
-
-    volume_status = "NORMAL"
-    volume_score = 0
-
-
-# -----------------------------
-# TREND
-# -----------------------------
-
-ema20 = close.ewm(
-    span=20,
-    adjust=False
-).mean()
-
-ema50 = close.ewm(
-    span=50,
-    adjust=False
-).mean()
-
-
-latest_ema20 = float(ema20.iloc[-1])
-latest_ema50 = float(ema50.iloc[-1])
-
-
-# -----------------------------
-# SENTIMENT SCORE
-# -----------------------------
-
-score = 50
-
-
-# Price vs VWAP
-if latest_price > latest_vwap:
-
-    score += 15
-
-else:
-
-    score -= 15
-
-
-# RSI
-if latest_rsi > 60:
-
-    score += 20
-
-elif latest_rsi < 40:
-
-    score -= 20
-
-
-# EMA trend
-if latest_ema20 > latest_ema50:
-
-    score += 10
-
-elif latest_ema20 < latest_ema50:
-
-    score -= 10
-
-
-# Volume
-if latest_price > latest_vwap:
-
-    score += volume_score
-
-else:
-
-    score -= volume_score
-
-
-# Keep score between 0 and 100
-score = max(
-    0,
-    min(100, round(score))
-)
-
-
-# -----------------------------
-# MARKET BIAS
-# -----------------------------
-
-if score >= 65:
-
-    bias = "BULLISH"
-    bias_text = "UPSIDE BIAS"
-
-elif score <= 35:
-
-    bias = "BEARISH"
-    bias_text = "DOWNSIDE BIAS"
-
-else:
-
-    bias = "NEUTRAL"
-    bias_text = "SIDEWAYS / NEUTRAL"
-
-
-# -----------------------------
-# SUPPORT / RESISTANCE
-# -----------------------------
-
-recent_high = float(
-    high.tail(50).max()
-)
-
-recent_low = float(
-    low.tail(50).min()
-)
-
-
-support = round(
-    recent_low / 50
-) * 50
-
-
-resistance = round(
-    recent_high / 50
-) * 50
-
-
-# -----------------------------
-# DASHBOARD
-# -----------------------------
-
-st.divider()
-
-col1, col2 = st.columns(2)
-
-with col1:
-
-    st.metric(
-        "NIFTY 50",
-        f"{latest_price:,.2f}",
-        f"{change:+.2f} ({change_pct:+.2f}%)"
-    )
-
-
-with col2:
-
-    st.metric(
-        "Sentiment Score",
-        f"{score} / 100",
-        bias
-    )
-
-
-st.divider()
-
-
-# -----------------------------
-# MARKET BIAS
-# -----------------------------
-
-st.subheader(
-    f"🎯 Current Market Bias: {bias_text}"
-)
-
-
-if bias == "BULLISH":
+    profile = kite.profile()
 
     st.success(
-        "🟢 Market में bullish conditions दिखाई दे रही हैं।"
+        f"Connected: {profile.get('user_name', 'Kite User')}"
     )
 
-elif bias == "BEARISH":
+except Exception as e:
 
     st.error(
-        "🔴 Market में bearish conditions दिखाई दे रही हैं।"
+        f"Kite connection error: {e}"
     )
 
-else:
+    st.stop()
 
-    st.warning(
-        "🟡 Market अभी neutral/sideways conditions में है।"
+# -------------------------------------------------
+# MARKET DATA
+# -------------------------------------------------
+
+st.divider()
+
+st.subheader("📊 Live Market")
+
+try:
+
+    instruments = kite.ltp([
+        "NSE:NIFTY 50",
+        "NSE:NIFTY BANK",
+        "NSE:INDIA VIX"
+    ])
+
+except Exception as e:
+
+    st.error(
+        f"❌ Market data error: {e}"
     )
 
+    st.stop()
 
-# -----------------------------
-# INDICATORS
-# -----------------------------
+# -------------------------------------------------
+# DISPLAY
+# -------------------------------------------------
 
-st.subheader("📊 Market Indicators")
+c1, c2, c3 = st.columns(3)
 
-
-c1, c2, c3, c4 = st.columns(4)
-
+nifty = instruments.get("NSE:NIFTY 50", {})
+banknifty = instruments.get("NSE:NIFTY BANK", {})
+vix = instruments.get("NSE:INDIA VIX", {})
 
 with c1:
 
     st.metric(
-        "RSI",
-        f"{latest_rsi:.2f}"
+        "NIFTY 50",
+        f"{nifty.get('last_price', 0):,.2f}"
     )
-
 
 with c2:
 
     st.metric(
-        "VWAP",
-        f"{latest_vwap:,.2f}"
+        "BANK NIFTY",
+        f"{banknifty.get('last_price', 0):,.2f}"
     )
-
 
 with c3:
 
     st.metric(
-        "Volume",
-        volume_status
+        "INDIA VIX",
+        f"{vix.get('last_price', 0):,.2f}"
     )
 
+# -------------------------------------------------
+# STATUS
+# -------------------------------------------------
 
-with c4:
+st.divider()
 
-    trend = (
-        "UPTREND"
-        if latest_ema20 > latest_ema50
-        else "DOWNTREND"
-    )
-
-    st.metric(
-        "Trend",
-        trend
-    )
-
-
-# -----------------------------
-# SUPPORT / RESISTANCE
-# -----------------------------
-
-st.subheader("📍 Support & Resistance")
-
-
-s1, s2 = st.columns(2)
-
-
-with s1:
-
-    st.metric(
-        "Support",
-        f"{support:,.0f}"
-    )
-
-
-with s2:
-
-    st.metric(
-        "Resistance",
-        f"{resistance:,.0f}"
-    )
-
-
-# -----------------------------
-# AI COMMENTARY
-# -----------------------------
-
-st.subheader("🧠 Market Commentary")
-
-
-if bias == "BULLISH":
-
-    commentary = (
-        f"NIFTY price VWAP के ऊपर है और RSI "
-        f"{latest_rsi:.1f} है। Short-term momentum "
-        "bullish दिखाई दे रहा है। Volume और trend "
-        "को confirmation के लिए monitor करें।"
-    )
-
-elif bias == "BEARISH":
-
-    commentary = (
-        f"NIFTY price VWAP के नीचे है और RSI "
-        f"{latest_rsi:.1f} है। Short-term momentum "
-        "weak दिखाई दे रहा है। Support levels पर "
-        "price reaction को monitor करें।"
-    )
-
-else:
-
-    commentary = (
-        f"NIFTY का current sentiment neutral है। "
-        f"RSI {latest_rsi:.1f} है और price/VWAP "
-        "relationship को अगली direction के लिए monitor करें।"
-    )
-
-
-st.info(commentary)
-
-
-# -----------------------------
-# WARNING
-# -----------------------------
-
-st.caption(
-    "⚠️ यह dashboard market indicators के आधार पर "
-    "sentiment estimate करता है। यह guaranteed prediction "
-    "या investment advice नहीं है।"
+st.success(
+    "🟢 Kite API connected. Live market-data connection is working."
 )
 
-
-# -----------------------------
-# AUTO REFRESH
-# -----------------------------
-
 st.caption(
-    "🔄 Data लगभग हर 60 seconds में refresh होता है।"
+    "यह version केवल Kite authentication और live LTP connection test करता है."
 )

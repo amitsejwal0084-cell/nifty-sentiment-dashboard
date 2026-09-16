@@ -4,19 +4,22 @@ from datetime import datetime
 from kiteconnect import KiteConnect
 
 
+# =====================================================
+# PAGE
+# =====================================================
+
 st.set_page_config(
     page_title="NIFTY Live Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-
 st.title("📈 NIFTY LIVE TRADING DASHBOARD")
 st.caption("Zerodha Kite Connect • Real Market Data")
 
 
 # =====================================================
-# KITE
+# KITE CREDENTIALS
 # =====================================================
 
 API_KEY = st.secrets.get("KITE_API_KEY")
@@ -25,7 +28,6 @@ API_SECRET = st.secrets.get("KITE_API_SECRET")
 if not API_KEY or not API_SECRET:
     st.error("Kite API credentials नहीं मिले।")
     st.stop()
-
 
 kite = KiteConnect(api_key=API_KEY)
 
@@ -36,7 +38,6 @@ kite = KiteConnect(api_key=API_KEY)
 
 access_token = st.session_state.get("access_token")
 
-
 if not access_token:
 
     st.subheader("🔐 Kite Login")
@@ -46,21 +47,19 @@ if not access_token:
         kite.login_url()
     )
 
-    request_token = st.query_params.get(
-        "request_token"
-    )
+    request_token = st.query_params.get("request_token")
 
     if request_token:
 
         try:
 
-            session = kite.generate_session(
+            session_data = kite.generate_session(
                 request_token,
                 api_secret=API_SECRET
             )
 
             st.session_state["access_token"] = (
-                session["access_token"]
+                session_data["access_token"]
             )
 
             st.query_params.clear()
@@ -107,6 +106,10 @@ except Exception as e:
     st.stop()
 
 
+# =====================================================
+# TIME
+# =====================================================
+
 st.caption(
     "Last Update: "
     + datetime.now().strftime(
@@ -115,13 +118,17 @@ st.caption(
 )
 
 
+# =====================================================
+# MANUAL REFRESH
+# =====================================================
+
 if st.button("🔄 Refresh"):
 
     st.rerun()
 
 
 # =====================================================
-# LIVE INDICES
+# LIVE MARKET
 # =====================================================
 
 st.divider()
@@ -254,6 +261,10 @@ nifty_price = get_ltp(
 )
 
 
+# =====================================================
+# NFO INSTRUMENTS
+# =====================================================
+
 try:
 
     instruments = kite.instruments("NFO")
@@ -279,7 +290,7 @@ if df.empty:
 
 
 # =====================================================
-# FILTER NIFTY OPTIONS
+# CLEAN DATA
 # =====================================================
 
 df["expiry"] = pd.to_datetime(
@@ -297,11 +308,16 @@ df["strike"] = pd.to_numeric(
 today = datetime.now().date()
 
 
+# =====================================================
+# FILTER NIFTY OPTIONS
+# =====================================================
+
 options = df[
     (df["name"] == "NIFTY") &
     (
-        df["instrument_type"]
-        .isin(["CE", "PE"])
+        df["instrument_type"].isin(
+            ["CE", "PE"]
+        )
     ) &
     (
         df["expiry"] >= today
@@ -355,7 +371,7 @@ st.write(
 
 
 # =====================================================
-# ATM ±10
+# ATM ±10 STRIKES
 # =====================================================
 
 options = options[
@@ -401,7 +417,7 @@ for start in range(
 
 
 # =====================================================
-# BUILD TABLE
+# BUILD OPTION TABLE
 # =====================================================
 
 rows = []
@@ -415,6 +431,7 @@ for _, row in options.iterrows():
         "NFO:" + symbol,
         {}
     )
+
 
     depth = quote.get(
         "depth",
@@ -435,7 +452,6 @@ for _, row in options.iterrows():
 
 
     bid = None
-
     ask = None
 
 
@@ -485,78 +501,395 @@ option_data = pd.DataFrame(
 )
 
 
+if option_data.empty:
+
+    st.warning(
+        "Option quote data उपलब्ध नहीं है।"
+    )
+
+    st.stop()
+
+
 # =====================================================
-# SUMMARY
+# NUMERIC COLUMNS
 # =====================================================
 
-if not option_data.empty:
+for column in [
+    "Strike",
+    "LTP",
+    "OI",
+    "Volume",
+    "Bid",
+    "Ask"
+]:
 
-    ce = option_data[
-        option_data["Type"] == "CE"
-    ]
-
-    pe = option_data[
-        option_data["Type"] == "PE"
-    ]
-
-
-    ce_oi = ce["OI"].fillna(
-        0
-    ).sum()
-
-
-    pe_oi = pe["OI"].fillna(
-        0
-    ).sum()
+    option_data[column] = pd.to_numeric(
+        option_data[column],
+        errors="coerce"
+    )
 
 
-    if ce_oi > 0:
+# =====================================================
+# SORT
+# =====================================================
 
-        pcr = pe_oi / ce_oi
+option_data = option_data.sort_values(
+    ["Strike", "Type"]
+).reset_index(
+    drop=True
+)
+
+
+# =====================================================
+# OI SNAPSHOT STORAGE
+# =====================================================
+
+if "previous_option_snapshot" not in st.session_state:
+
+    st.session_state[
+        "previous_option_snapshot"
+    ] = {}
+
+
+previous_snapshot = st.session_state[
+    "previous_option_snapshot"
+]
+
+
+# =====================================================
+# CALCULATE OI CHANGE + PRICE CHANGE
+# =====================================================
+
+oi_changes = []
+oi_change_percentages = []
+price_changes = []
+buildups = []
+
+
+for _, row in option_data.iterrows():
+
+    symbol = row["Symbol"]
+
+    current_oi = row["OI"]
+
+    current_ltp = row["LTP"]
+
+
+    previous = previous_snapshot.get(
+        symbol
+    )
+
+
+    if previous is None:
+
+        oi_change = None
+        oi_change_percent = None
+        price_change = None
+        buildup = "Waiting..."
+
 
     else:
 
-        pcr = None
+        previous_oi = previous.get(
+            "OI"
+        )
+
+        previous_ltp = previous.get(
+            "LTP"
+        )
 
 
-    if not pe.empty:
+        # -----------------------------
+        # OI CHANGE
+        # -----------------------------
 
-        support = pe.loc[
-            pe["OI"].fillna(0).idxmax(),
-            "Strike"
-        ]
+        if (
+            pd.notna(current_oi)
+            and pd.notna(previous_oi)
+        ):
 
-    else:
+            oi_change = (
+                current_oi
+                - previous_oi
+            )
 
-        support = None
+
+            if previous_oi != 0:
+
+                oi_change_percent = (
+                    oi_change
+                    / previous_oi
+                ) * 100
+
+            else:
+
+                oi_change_percent = None
+
+        else:
+
+            oi_change = None
+            oi_change_percent = None
 
 
-    if not ce.empty:
+        # -----------------------------
+        # PRICE CHANGE
+        # -----------------------------
 
-        resistance = ce.loc[
-            ce["OI"].fillna(0).idxmax(),
-            "Strike"
-        ]
+        if (
+            pd.notna(current_ltp)
+            and pd.notna(previous_ltp)
+        ):
 
-    else:
+            price_change = (
+                current_ltp
+                - previous_ltp
+            )
 
-        resistance = None
+        else:
 
+            price_change = None
+
+
+        # -----------------------------
+        # BUILDUP
+        # -----------------------------
+
+        if (
+            oi_change is None
+            or price_change is None
+        ):
+
+            buildup = "N/A"
+
+        elif (
+            oi_change > 0
+            and price_change > 0
+        ):
+
+            buildup = "Long Buildup"
+
+        elif (
+            oi_change > 0
+            and price_change < 0
+        ):
+
+            buildup = "Short Buildup"
+
+        elif (
+            oi_change < 0
+            and price_change > 0
+        ):
+
+            buildup = "Short Covering"
+
+        elif (
+            oi_change < 0
+            and price_change < 0
+        ):
+
+            buildup = "Long Unwinding"
+
+        else:
+
+            buildup = "Neutral"
+
+
+    oi_changes.append(
+        oi_change
+    )
+
+    oi_change_percentages.append(
+        oi_change_percent
+    )
+
+    price_changes.append(
+        price_change
+    )
+
+    buildups.append(
+        buildup
+    )
+
+
+# =====================================================
+# ADD COLUMNS
+# =====================================================
+
+option_data["OI Change"] = (
+    oi_changes
+)
+
+
+option_data["OI Change %"] = (
+    oi_change_percentages
+)
+
+
+option_data["Price Change"] = (
+    price_changes
+)
+
+
+option_data["Buildup"] = (
+    buildups
+)
+
+
+# =====================================================
+# SAVE CURRENT SNAPSHOT
+# =====================================================
+
+new_snapshot = {}
+
+
+for _, row in option_data.iterrows():
+
+    symbol = row["Symbol"]
+
+    new_snapshot[symbol] = {
+
+        "OI": row["OI"],
+
+        "LTP": row["LTP"]
+
+    }
+
+
+st.session_state[
+    "previous_option_snapshot"
+] = new_snapshot
+
+
+# =====================================================
+# PCR
+# =====================================================
+
+ce_oi = option_data[
+    option_data["Type"] == "CE"
+]["OI"].fillna(0).sum()
+
+
+pe_oi = option_data[
+    option_data["Type"] == "PE"
+]["OI"].fillna(0).sum()
+
+
+if ce_oi > 0:
+
+    pcr = pe_oi / ce_oi
 
 else:
 
     pcr = None
+
+
+# =====================================================
+# SUPPORT
+# =====================================================
+
+puts = option_data[
+    option_data["Type"] == "PE"
+].copy()
+
+
+if not puts.empty:
+
+    support = puts.loc[
+        puts["OI"].fillna(0).idxmax(),
+        "Strike"
+    ]
+
+else:
+
     support = None
+
+
+# =====================================================
+# RESISTANCE
+# =====================================================
+
+calls = option_data[
+    option_data["Type"] == "CE"
+].copy()
+
+
+if not calls.empty:
+
+    resistance = calls.loc[
+        calls["OI"].fillna(0).idxmax(),
+        "Strike"
+    ]
+
+else:
+
     resistance = None
 
 
 # =====================================================
-# SUMMARY CARDS
+# MAX PAIN
+# =====================================================
+
+max_pain = None
+
+
+strikes = sorted(
+    option_data[
+        "Strike"
+    ].dropna().unique()
+)
+
+
+if strikes:
+
+    pain = {}
+
+
+    for test_strike in strikes:
+
+        call_pain = (
+            (
+                test_strike
+                - calls["Strike"]
+            ).clip(lower=0)
+            * calls["OI"].fillna(0)
+        ).sum()
+
+
+        put_pain = (
+            (
+                puts["Strike"]
+                - test_strike
+            ).clip(lower=0)
+            * puts["OI"].fillna(0)
+        ).sum()
+
+
+        pain[test_strike] = (
+            call_pain
+            + put_pain
+        )
+
+
+    if pain:
+
+        max_pain = min(
+            pain,
+            key=pain.get
+        )
+
+
+# =====================================================
+# SUMMARY
 # =====================================================
 
 st.divider()
 
-s1, s2, s3, s4 = st.columns(4)
+st.subheader(
+    "📌 Option Summary"
+)
+
+
+s1, s2, s3, s4, s5 = st.columns(5)
 
 
 with s1:
@@ -597,35 +930,164 @@ with s4:
     )
 
 
+with s5:
+
+    st.metric(
+        "Max Pain",
+        f"{max_pain:,.0f}"
+        if max_pain is not None
+        else "-"
+    )
+
+
 # =====================================================
-# CE
+# OI CHANGE SUMMARY
 # =====================================================
 
 st.divider()
 
-st.subheader("🟢 CALL — CE")
+st.subheader(
+    "📈 OI Change & Buildup"
+)
+
+
+total_ce_oi_change = option_data[
+    option_data["Type"] == "CE"
+]["OI Change"].sum(
+    min_count=1
+)
+
+
+total_pe_oi_change = option_data[
+    option_data["Type"] == "PE"
+]["OI Change"].sum(
+    min_count=1
+)
+
+
+b1, b2, b3 = st.columns(3)
+
+
+with b1:
+
+    if pd.notna(total_ce_oi_change):
+
+        st.metric(
+            "Total CE OI Change",
+            f"{total_ce_oi_change:,.0f}"
+        )
+
+    else:
+
+        st.metric(
+            "Total CE OI Change",
+            "—"
+        )
+
+
+with b2:
+
+    if pd.notna(total_pe_oi_change):
+
+        st.metric(
+            "Total PE OI Change",
+            f"{total_pe_oi_change:,.0f}"
+        )
+
+    else:
+
+        st.metric(
+            "Total PE OI Change",
+            "—"
+        )
+
+
+with b3:
+
+    st.metric(
+        "Snapshot",
+        "Live"
+    )
+
+
+st.caption(
+    "OI Change पहली snapshot पर — रहेगा। अगली refresh पर बदलाव calculate होगा।"
+)
+
+
+# =====================================================
+# CE TABLE
+# =====================================================
+
+st.divider()
+
+st.subheader(
+    "🟢 CALL OPTIONS — CE"
+)
+
+
+ce_display = option_data[
+    option_data["Type"] == "CE"
+].copy()
+
+
+ce_display = ce_display[
+    [
+        "Strike",
+        "Symbol",
+        "LTP",
+        "OI",
+        "OI Change",
+        "OI Change %",
+        "Price Change",
+        "Volume",
+        "Bid",
+        "Ask",
+        "Buildup"
+    ]
+]
 
 
 st.dataframe(
-    option_data[
-        option_data["Type"] == "CE"
-    ],
+    ce_display,
     use_container_width=True,
     hide_index=True
 )
 
 
 # =====================================================
-# PE
+# PE TABLE
 # =====================================================
 
-st.subheader("🔴 PUT — PE")
+st.subheader(
+    "🔴 PUT OPTIONS — PE"
+)
+
+
+pe_display = option_data[
+    option_data["Type"] == "PE"
+].copy()
+
+
+pe_display = pe_display[
+    [
+        "Strike",
+        "Symbol",
+        "LTP",
+        "OI",
+        "OI Change",
+        "OI Change %",
+        "Price Change",
+        "Volume",
+        "Bid",
+        "Ask",
+        "Buildup"
+    ]
+]
 
 
 st.dataframe(
-    option_data[
-        option_data["Type"] == "PE"
-    ],
+    pe_display,
     use_container_width=True,
     hide_index=True
 )
@@ -650,6 +1112,10 @@ if auto_refresh:
     )
 
 
+# =====================================================
+# FOOTER
+# =====================================================
+
 st.divider()
 
 st.caption(
@@ -661,5 +1127,9 @@ st.caption(
 )
 
 st.caption(
-    "यह dashboard केवल market-data analysis के लिए है।"
+    "OI Change = current snapshot OI − previous successful snapshot OI"
+)
+
+st.caption(
+    "Buildup classification is based on price change + OI change and is for analysis only."
 )

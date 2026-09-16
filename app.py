@@ -15,96 +15,37 @@ from Option_chan import (
 )
 
 
-# =========================================================
-# PAGE
-# =========================================================
-
 st.set_page_config(
-    page_title="NIFTY Professional Dashboard",
+    page_title="NIFTY Trading Dashboard",
     page_icon="📈",
-    layout="wide",
+    layout="wide"
 )
 
-
-# =========================================================
-# STYLE
-# =========================================================
-
-st.markdown(
-    """
-    <style>
-
-    .stApp {
-        background-color: #0b0f14;
-    }
-
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 2rem;
-    }
-
-    div[data-testid="stMetric"] {
-        background-color: #151b23;
-        border: 1px solid #293241;
-        border-radius: 10px;
-        padding: 10px;
-    }
-
-    .signal-box {
-        padding: 18px;
-        border-radius: 12px;
-        background-color: #151b23;
-        border: 1px solid #293241;
-        text-align: center;
-        font-size: 24px;
-        font-weight: bold;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# =========================================================
-# TITLE
-# =========================================================
 
 st.title("📈 NIFTY PROFESSIONAL TRADING DASHBOARD")
 
 st.caption(
-    "Zerodha Kite Connect • Live Market Data • Option Chain Analysis"
+    "Zerodha Kite Connect • Live Market Data"
 )
 
-
-# =========================================================
-# SECRETS
-# =========================================================
 
 API_KEY = st.secrets.get("KITE_API_KEY")
 API_SECRET = st.secrets.get("KITE_API_SECRET")
 
+
 if not API_KEY or not API_SECRET:
 
     st.error(
-        "Kite API credentials Streamlit Secrets में नहीं मिले।"
+        "Kite API Key या API Secret Streamlit Secrets में नहीं मिला।"
     )
 
     st.stop()
 
 
-# =========================================================
-# KITE CLIENT
-# =========================================================
-
 kite = KiteConnect(
     api_key=API_KEY
 )
 
-
-# =========================================================
-# LOGIN
-# =========================================================
 
 access_token = st.session_state.get(
     "access_token"
@@ -117,7 +58,7 @@ if not access_token:
 
     st.link_button(
         "🔑 Login with Kite",
-        kite.login_url(),
+        kite.login_url()
     )
 
     request_token = st.query_params.get(
@@ -130,7 +71,7 @@ if not access_token:
 
             session_data = kite.generate_session(
                 request_token,
-                api_secret=API_SECRET,
+                api_secret=API_SECRET
             )
 
             access_token = session_data[
@@ -158,18 +99,10 @@ if not access_token:
     st.stop()
 
 
-# =========================================================
-# SET ACCESS TOKEN
-# =========================================================
-
 kite.set_access_token(
     access_token
 )
 
-
-# =========================================================
-# PROFILE TEST
-# =========================================================
 
 try:
 
@@ -177,66 +110,57 @@ try:
 
     user_name = profile.get(
         "user_name",
-        "Kite User",
+        "Kite User"
     )
 
 except Exception as e:
 
     st.session_state.pop(
         "access_token",
-        None,
+        None
     )
 
     st.error(
-        f"Kite session error: {e}"
+        f"Kite Session Error: {e}"
     )
 
     st.stop()
 
 
-# =========================================================
-# TOP BAR
-# =========================================================
-
-c1, c2, c3 = st.columns(
-    [2, 2, 1]
+st.success(
+    f"🟢 Connected: {user_name}"
 )
 
-with c1:
 
-    st.success(
-        f"🟢 Connected: {user_name}"
+st.caption(
+    "Last Update: "
+    + datetime.now().strftime(
+        "%d-%m-%Y %H:%M:%S"
     )
-
-with c2:
-
-    st.caption(
-        "Last Update: "
-        + datetime.now().strftime(
-            "%d-%m-%Y %H:%M:%S"
-        )
-    )
-
-with c3:
-
-    if st.button(
-        "🔄 Refresh Now",
-        use_container_width=True,
-    ):
-
-        st.rerun()
+)
 
 
-# =========================================================
-# MARKET QUOTES
-# =========================================================
+if st.button("🔄 Refresh Now"):
+
+    st.rerun()
+
+
+st.divider()
+
+
+# ==============================
+# LIVE MARKET
+# ==============================
+
+st.subheader("📊 Live Market")
+
 
 market_symbols = [
     "NSE:NIFTY 50",
     "NSE:NIFTY BANK",
     "BSE:SENSEX",
     "NSE:NIFTY NEXT 50",
-    "NSE:INDIA VIX",
+    "NSE:INDIA VIX"
 ]
 
 
@@ -249,130 +173,116 @@ try:
 except Exception as e:
 
     st.error(
-        f"Market data error: {e}"
+        f"Market Data Error: {e}"
     )
 
     st.stop()
 
 
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-
-def get_price(symbol):
+def price(symbol):
 
     return market.get(
         symbol,
         {}
     ).get(
         "last_price",
-        0,
+        0
     )
 
 
-def get_change(symbol):
+def change(symbol):
 
     data = market.get(
         symbol,
         {}
     )
 
-    last_price = data.get(
+    last = data.get(
         "last_price",
-        0,
+        0
     )
 
-    close_price = data.get(
+    close = data.get(
         "ohlc",
         {}
     ).get(
         "close",
-        0,
+        0
     )
 
-    if close_price:
+    if close:
 
         return (
-            (last_price - close_price)
-            / close_price
+            (last - close)
+            / close
         ) * 100
 
     return 0
 
 
-# =========================================================
-# MARKET OVERVIEW
-# =========================================================
-
-st.divider()
-
-st.subheader(
-    "📊 Market Overview"
-)
+c1, c2, c3, c4, c5 = st.columns(5)
 
 
-m1, m2, m3, m4, m5 = st.columns(5)
-
-
-with m1:
+with c1:
 
     st.metric(
         "NIFTY 50",
-        f"{get_price('NSE:NIFTY 50'):,.2f}",
-        f"{get_change('NSE:NIFTY 50'):+.2f}%",
+        f"{price('NSE:NIFTY 50'):,.2f}",
+        f"{change('NSE:NIFTY 50'):+.2f}%"
     )
 
 
-with m2:
+with c2:
 
     st.metric(
         "BANK NIFTY",
-        f"{get_price('NSE:NIFTY BANK'):,.2f}",
-        f"{get_change('NSE:NIFTY BANK'):+.2f}%",
+        f"{price('NSE:NIFTY BANK'):,.2f}",
+        f"{change('NSE:NIFTY BANK'):+.2f}%"
     )
 
 
-with m3:
+with c3:
 
     st.metric(
         "SENSEX",
-        f"{get_price('BSE:SENSEX'):,.2f}",
-        f"{get_change('BSE:SENSEX'):+.2f}%",
+        f"{price('BSE:SENSEX'):,.2f}",
+        f"{change('BSE:SENSEX'):+.2f}%"
     )
 
 
-with m4:
+with c4:
 
     st.metric(
         "NIFTY NEXT 50",
-        f"{get_price('NSE:NIFTY NEXT 50'):,.2f}",
-        f"{get_change('NSE:NIFTY NEXT 50'):+.2f}%",
+        f"{price('NSE:NIFTY NEXT 50'):,.2f}",
+        f"{change('NSE:NIFTY NEXT 50'):+.2f}%"
     )
 
 
-with m5:
+with c5:
 
     st.metric(
         "INDIA VIX",
-        f"{get_price('NSE:INDIA VIX'):,.2f}",
-        f"{get_change('NSE:INDIA VIX'):+.2f}%",
+        f"{price('NSE:INDIA VIX'):,.2f}",
+        f"{change('NSE:INDIA VIX'):+.2f}%"
     )
 
 
-# =========================================================
-# NIFTY SPOT
-# =========================================================
+# ==============================
+# NIFTY
+# ==============================
 
-nifty_price = get_price(
+nifty_price = price(
     "NSE:NIFTY 50"
 )
 
 
-# =========================================================
-# OPTION CHAIN
-# =========================================================
-
 st.divider()
+
+
+# ==============================
+# OPTION CHAIN
+# ==============================
 
 st.subheader(
     "⛓️ NIFTY OPTION CHAIN"
@@ -383,7 +293,7 @@ try:
 
     option_data = get_live_option_chain(
         nifty_price,
-        strikes_each_side=10,
+        10
     )
 
 except Exception as e:
@@ -394,10 +304,6 @@ except Exception as e:
         f"Option Chain Error: {e}"
     )
 
-
-# =========================================================
-# SNAPSHOT OI CHANGE
-# =========================================================
 
 if not option_data.empty:
 
@@ -410,22 +316,10 @@ if not option_data.empty:
     )
 
 
-# =========================================================
-# PCR
-# =========================================================
-
 pcr = calculate_pcr(
     option_data
 )
 
-if pcr is None:
-
-    pcr = 0
-
-
-# =========================================================
-# SUPPORT / RESISTANCE
-# =========================================================
 
 support, resistance = (
     calculate_support_resistance(
@@ -434,29 +328,19 @@ support, resistance = (
 )
 
 
-# =========================================================
-# MAX PAIN
-# =========================================================
-
 max_pain = calculate_max_pain(
     option_data
 )
 
 
-# =========================================================
-# SENTIMENT
-# =========================================================
-
-sentiment, sentiment_score = (
-    option_sentiment(
-        option_data
-    )
+sentiment, score = option_sentiment(
+    option_data
 )
 
 
-# =========================================================
-# OPTION SUMMARY
-# =========================================================
+# ==============================
+# SUMMARY
+# ==============================
 
 s1, s2, s3, s4, s5, s6 = st.columns(6)
 
@@ -465,7 +349,7 @@ with s1:
 
     st.metric(
         "NIFTY",
-        f"{nifty_price:,.2f}",
+        f"{nifty_price:,.2f}"
     )
 
 
@@ -473,7 +357,9 @@ with s2:
 
     st.metric(
         "PCR",
-        f"{pcr:.2f}",
+        f"{pcr:.2f}"
+        if pcr is not None
+        else "-"
     )
 
 
@@ -483,7 +369,7 @@ with s3:
         "Support",
         f"{support:,.0f}"
         if support is not None
-        else "-",
+        else "-"
     )
 
 
@@ -493,7 +379,7 @@ with s4:
         "Resistance",
         f"{resistance:,.0f}"
         if resistance is not None
-        else "-",
+        else "-"
     )
 
 
@@ -503,7 +389,7 @@ with s5:
         "Max Pain",
         f"{max_pain:,.0f}"
         if max_pain is not None
-        else "-",
+        else "-"
     )
 
 
@@ -511,229 +397,48 @@ with s6:
 
     st.metric(
         "Sentiment",
-        sentiment,
+        sentiment
     )
 
 
-# =========================================================
-# SENTIMENT BOX
-# =========================================================
-
-st.markdown(
-    f"""
-    <div class="signal-box">
-        MARKET SENTIMENT: {sentiment}
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+st.divider()
 
 
-# =========================================================
+# ==============================
 # OPTION TABLE
-# =========================================================
+# ==============================
 
-if not option_data.empty:
+if option_data.empty:
 
-    display = option_data.copy()
-
-    display = display[
-        [
-            "strike",
-            "type",
-            "ltp",
-            "oi",
-            "oi_change",
-            "volume",
-            "bid",
-            "ask",
-            "buildup",
-        ]
-    ]
-
-    display.columns = [
-        "Strike",
-        "Type",
-        "LTP",
-        "OI",
-        "OI Δ",
-        "Volume",
-        "Bid",
-        "Ask",
-        "Buildup",
-    ]
-
-    display["LTP"] = pd.to_numeric(
-        display["LTP"],
-        errors="coerce",
-    ).round(2)
-
-    display["OI"] = pd.to_numeric(
-        display["OI"],
-        errors="coerce",
-    ).fillna(0).astype(int)
-
-    display["OI Δ"] = pd.to_numeric(
-        display["OI Δ"],
-        errors="coerce",
-    ).fillna(0).astype(int)
-
-    display["Volume"] = pd.to_numeric(
-        display["Volume"],
-        errors="coerce",
-    ).fillna(0).astype(int)
-
-    display["Bid"] = pd.to_numeric(
-        display["Bid"],
-        errors="coerce",
-    ).round(2)
-
-    display["Ask"] = pd.to_numeric(
-        display["Ask"],
-        errors="coerce",
-    ).round(2)
-
-
-    st.markdown(
-        "### 🟢 CALL SIDE — CE"
-    )
-
-    calls = display[
-        display["Type"] == "CE"
-    ]
-
-    st.dataframe(
-        calls,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-    st.markdown(
-        "### 🔴 PUT SIDE — PE"
-    )
-
-    puts = display[
-        display["Type"] == "PE"
-    ]
-
-    st.dataframe(
-        puts,
-        use_container_width=True,
-        hide_index=True,
+    st.info(
+        "Option Chain अभी उपलब्ध नहीं है।"
     )
 
 else:
 
-    st.warning(
-        "Option Chain data उपलब्ध नहीं है।"
+    st.subheader(
+        "📋 Option Chain Data"
+    )
+
+    st.dataframe(
+        option_data,
+        use_container_width=True,
+        hide_index=True
     )
 
 
-# =========================================================
-# BUILDUP SUMMARY
-# =========================================================
-
 st.divider()
 
-st.subheader(
-    "🧠 Option Buildup Summary"
-)
-
-
-if not option_data.empty:
-
-    buildup_counts = (
-        option_data["buildup"]
-        .value_counts()
-    )
-
-    b1, b2, b3, b4 = st.columns(4)
-
-
-    with b1:
-
-        st.metric(
-            "Long Buildup",
-            int(
-                buildup_counts.get(
-                    "LONG BUILDUP",
-                    0,
-                )
-            ),
-        )
-
-
-    with b2:
-
-        st.metric(
-            "Short Buildup",
-            int(
-                buildup_counts.get(
-                    "SHORT BUILDUP",
-                    0,
-                )
-            ),
-        )
-
-
-    with b3:
-
-        st.metric(
-            "Short Covering",
-            int(
-                buildup_counts.get(
-                    "SHORT COVERING",
-                    0,
-                )
-            ),
-        )
-
-
-    with b4:
-
-        st.metric(
-            "Long Unwinding",
-            int(
-                buildup_counts.get(
-                    "LONG UNWINDING",
-                    0,
-                )
-            ),
-        )
-
-
-# =========================================================
-# REFRESH CONTROL
-# =========================================================
-
-st.divider()
 
 st.subheader(
     "⏱️ Dashboard Refresh"
 )
 
+
 auto_refresh = st.checkbox(
-    "30 सेकंड Auto Refresh",
-    value=False,
+    "30 सेकंड Auto Refresh"
 )
 
-if auto_refresh:
-
-    st.info(
-        "Auto Refresh ON — page हर 30 सेकंड में update होगी।"
-    )
-
-else:
-
-    st.caption(
-        "Auto Refresh OFF — Refresh Now button से update करें।"
-    )
-
-
-# =========================================================
-# AUTO REFRESH USING META REFRESH
-# =========================================================
 
 if auto_refresh:
 
@@ -741,25 +446,14 @@ if auto_refresh:
         """
         <meta http-equiv="refresh" content="30">
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
 
-# =========================================================
-# FOOTER
-# =========================================================
-
-st.divider()
-
-st.caption(
-    "⚠️ यह dashboard केवल market-data analysis के लिए है। "
-    "BUY/SELL bias guaranteed result नहीं है।"
-)
-
-st.caption(
-    "OI Δ = पिछले dashboard snapshot की तुलना में OI परिवर्तन।"
-)
-
 st.caption(
     "Data Source: Zerodha Kite Connect"
+)
+
+st.caption(
+    "यह dashboard केवल market-data analysis के लिए है।"
 )

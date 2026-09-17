@@ -1,166 +1,151 @@
 import streamlit as st
 import pandas as pd
+from kiteconnect import KiteConnect
 
 
-def get_live_option_chain(spot_price, strikes_each_side=10):
+def get_kite():
+    api_key = st.secrets["KITE_API_KEY"]
+    access_token = st.secrets["KITE_ACCESS_TOKEN"]
 
-    return pd.DataFrame()
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
 
-
-def calculate_pcr(option_data):
-
-    if option_data is None or option_data.empty:
-        return None
-
-    ce_oi = option_data[
-        option_data["type"] == "CE"
-    ]["oi"].fillna(0).sum()
-
-    pe_oi = option_data[
-        option_data["type"] == "PE"
-    ]["oi"].fillna(0).sum()
-
-    if ce_oi == 0:
-        return None
-
-    return round(pe_oi / ce_oi, 2)
+    return kite
 
 
-def calculate_support_resistance(option_data):
+def get_nifty_option_chain():
+    kite = get_kite()
 
-    if option_data is None or option_data.empty:
-        return None, None
+    instruments = kite.instruments("NFO")
 
-    calls = option_data[
-        option_data["type"] == "CE"
-    ]
+    df = pd.DataFrame(instruments)
 
-    puts = option_data[
-        option_data["type"] == "PE"
-    ]
+    if df.empty:
+        return pd.DataFrame(), None
 
-    support = None
-    resistance = None
+    df = df[
+        (df["name"] == "NIFTY") &
+        (df["segment"] == "NFO-OPT")
+    ].copy()
 
-    if not puts.empty:
-        support = puts.loc[
-            puts["oi"].idxmax(),
-            "strike"
-        ]
+    if df.empty:
+        return pd.DataFrame(), None
 
-    if not calls.empty:
-        resistance = calls.loc[
-            calls["oi"].idxmax(),
-            "strike"
-        ]
+    df["expiry"] = pd.to_datetime(df["expiry"])
 
-    return support, resistance
+    today = pd.Timestamp.today().normalize()
 
+    future = df[df["expiry"] >= today]
 
-def calculate_max_pain(option_data):
+    if future.empty:
+        return pd.DataFrame(), None
 
-    if option_data is None or option_data.empty:
-        return None
+    expiry = future["expiry"].min()
 
-    strikes = sorted(
-        option_data["strike"].dropna().unique()
+    df = df[df["expiry"] == expiry].copy()
+
+    # NIFTY spot
+    quote = kite.ltp(["NSE:NIFTY 50"])
+
+    spot = float(
+        quote["NSE:NIFTY 50"]["last_price"]
     )
 
-    if not strikes:
+    # ATM
+    atm = round(spot / 50) * 50
+
+    df["distance"] = abs(
+        df["strike"] - atm
+    )
+
+    strikes = (
+        df[["strike", "distance"]]
+        .drop_duplicates()
+        .sort_values("distance")
+        .head(9)["strike"]
+        .tolist()
+    )
+
+    df = df[df["strike"].isin(strikes)]
+
+    symbols = [
+        f"NFO:{x}"
+        for x in df["tradingsymbol"]
+    ]
+
+    quotes = kite.quote(symbols)
+
+    rows = []
+
+    for _, row in df.iterrows():
+
+        symbol = f"NFO:{row['tradingsymbol']}"
+
+        q = quotes.get(symbol, {})
+
+        rows.append({
+            "strike_price": row["strike"],
+            "option_type": row["instrument_type"],
+            "trading_symbol": row["tradingsymbol"],
+            "ltp": q.get("last_price"),
+            "open_interest": q.get("oi", 0),
+            "volume": q.get("volume", 0),
+        })
+
+    option_df = pd.DataFrame(rows)
+
+    return option_df, spot
+
+
+def get_atm_option_chain(
+    option_data,
+    option_spot,
+    strikes_each_side=4
+):
+
+    if option_data.empty or option_spot is None:
+        return pd.DataFrame()
+
+    atm = round(
+        float(option_spot) / 50
+    ) * 50
+
+    low = atm - strikes_each_side * 50
+    high = atm + strikes_each_side * 50
+
+    df = option_data.copy()
+
+    return df[
+        (df["strike_price"] >= low) &
+        (df["strike_price"] <= high)
+    ].copy()
+
+
+def calculate_pcr(atm_data):
+
+    if atm_data.empty:
         return None
 
-    calls = option_data[
-        option_data["type"] == "CE"
-    ]
+    calls = atm_data[
+        atm_data["option_type"] == "CE"
+    ]["open_interest"].sum()
 
-    puts = option_data[
-        option_data["type"] == "PE"
-    ]
+    puts = atm_data[
+        atm_data["option_type"] == "PE"
+    ]["open_interest"].sum()
 
-    pain = {}
+    if calls == 0:
+        return None
 
-    for test_strike in strikes:
-
-        call_pain = (
-            (test_strike - calls["strike"])
-            .clip(lower=0)
-            * calls["oi"].fillna(0)
-        ).sum()
-
-        put_pain = (
-            (puts["strike"] - test_strike)
-            .clip(lower=0)
-            * puts["oi"].fillna(0)
-        ).sum()
-
-        pain[test_strike] = (
-            call_pain + put_pain
-        )
-
-    return min(pain, key=pain.get)
-
-
-def calculate_snapshot_oi_change(option_data):
-
-    if option_data is None or option_data.empty:
-        return option_data
-
-    previous = st.session_state.get(
-        "previous_option_oi",
-        {}
+    return round(
+        float(puts / calls),
+        2
     )
 
-    data = option_data.copy()
 
-    data["oi_change"] = data.apply(
-        lambda row:
-        row["oi"] -
-        previous.get(
-            row["symbol"],
-            row["oi"]
-        ),
-        axis=1
-    )
+def option_sentiment(atm_data):
 
-    st.session_state[
-        "previous_option_oi"
-    ] = dict(
-        zip(
-            data["symbol"],
-            data["oi"].fillna(0)
-        )
-    )
-
-    return data
-
-
-def calculate_buildup(option_data):
-
-    if option_data is None or option_data.empty:
-        return option_data
-
-    data = option_data.copy()
-
-    data["buildup"] = "NEUTRAL"
-
-    if "oi_change" in data.columns:
-
-        data.loc[
-            data["oi_change"] > 0,
-            "buildup"
-        ] = "OI BUILDUP"
-
-        data.loc[
-            data["oi_change"] < 0,
-            "buildup"
-        ] = "OI UNWINDING"
-
-    return data
-
-
-def option_sentiment(option_data):
-
-    pcr = calculate_pcr(option_data)
+    pcr = calculate_pcr(atm_data)
 
     if pcr is None:
         return "NO DATA", 50
@@ -172,3 +157,34 @@ def option_sentiment(option_data):
         return "BEARISH", 30
 
     return "NEUTRAL", 50
+
+
+def calculate_support_resistance(atm_data):
+
+    if atm_data.empty:
+        return None, None
+
+    calls = atm_data[
+        atm_data["option_type"] == "CE"
+    ]
+
+    puts = atm_data[
+        atm_data["option_type"] == "PE"
+    ]
+
+    resistance = None
+    support = None
+
+    if not calls.empty:
+        resistance = calls.loc[
+            calls["open_interest"].idxmax(),
+            "strike_price"
+        ]
+
+    if not puts.empty:
+        support = puts.loc[
+            puts["open_interest"].idxmax(),
+            "strike_price"
+        ]
+
+    return support, resistance
